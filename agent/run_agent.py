@@ -62,7 +62,11 @@ class Agent:
     def client(self) -> openai.OpenAI:
         """获取或惰性创建 OpenAI 客户端。"""
         if self._client is None:
-            self._client = openai.OpenAI()
+            # 某些中转 API 的 Web 防火墙 (WAF) 拦截了官方 OpenAI Python SDK 默认的 User-Agent 标头 (以 OpenAI/Python 开头)，
+            # 导致返回 403 / "Your request was blocked."。这里通过 default_headers 将其覆写为常见的 requests/http 标头。
+            self._client = openai.OpenAI(
+                default_headers={"User-Agent": "python-requests/2.31.0"}
+            )
         return self._client
 
     # -- 工具注册机制 --------------------------------------------------------
