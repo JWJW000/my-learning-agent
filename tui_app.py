@@ -114,7 +114,6 @@ class MyAgentTUI(App):
     Screen {
         background: #1e1e2e;
         color: #cdd6f4;
-        font-family: sans-serif;
     }
 
     #sidebar {
@@ -130,16 +129,16 @@ class MyAgentTUI(App):
         color: #89b4fa;
         padding: 1;
         margin-bottom: 1;
-        font-weight: bold;
+        text-style: bold;
     }
 
     .sidebar-section-header {
         color: #f5c2e7;
-        font-weight: bold;
+        text-style: bold;
         margin-top: 1;
         margin-bottom: 0;
         padding-left: 1;
-        border-bottom: thin #45475a;
+        border-bottom: solid #45475a;
     }
 
     #session_list, #skill_list {
@@ -180,7 +179,7 @@ class MyAgentTUI(App):
         background: #11111b;
         color: #a6e3a1;
         padding: 0 2;
-        font-style: italic;
+        text-style: italic;
     }
 
     #input_area {
