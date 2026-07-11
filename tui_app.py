@@ -25,7 +25,7 @@ from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
 from textual.reactive import reactive
 from textual.widgets import Footer, Header, Input, Label, ListItem, ListView, RichLog, Static
-from textual.work import work
+from textual import work
 
 from agent.config import load_config
 from agent.curator import Curator
