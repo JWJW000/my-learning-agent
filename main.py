@@ -45,7 +45,24 @@ def setup_logging() -> None:
 
 
 def main() -> None:
-    """主控函数，执行系统初始化，建立 REPL 命令行交互循环。"""
+    """主控函数，执行系统初始化，建立 REPL 命令行或 TUI 交互。"""
+    # 检查是否请求了 TUI 模式 (通过命令行参数 --tui 或 -t)
+    use_tui = "--tui" in sys.argv or "-t" in sys.argv
+
+    if use_tui:
+        # 启动 Textual TUI
+        try:
+            from tui_app import MyAgentTUI
+            app = MyAgentTUI()
+            app.run()
+        except ImportError as e:
+            print(f"[错误] 无法加载 TUI 组件，可能是未安装 'textual' 依赖: {e}", file=sys.stderr)
+            sys.exit(1)
+        except Exception as e:
+            print(f"[错误] TUI 启动异常: {e}", file=sys.stderr)
+            sys.exit(1)
+        return
+
     setup_logging()
 
     # 加载系统配置（config.yaml 或环境变量指定的 YAML 文件）
