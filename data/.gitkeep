@@ -1,0 +1,7 @@
+# This directory holds runtime data:
+# - state.db (SQLite database)
+# - MEMORY.md (agent memory)
+# - USER.md (user knowledge)
+# - .curator_state (curator state)
+#
+# All files here are gitignored except this README.

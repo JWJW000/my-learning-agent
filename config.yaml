@@ -1,0 +1,40 @@
+# My Learning Agent Configuration
+
+model:
+  # 主模型：用于对话和推理
+  primary: "gpt-4o"
+  # 辅助模型：用于上下文压缩、策展审查（便宜快速）
+  auxiliary: "gpt-4o-mini"
+
+memory:
+  # 记忆字符上限
+  agent_char_limit: 2200
+  user_char_limit: 1375
+  # 记忆文件存放目录
+  data_dir: "./data"
+
+skills:
+  # 技能文件存放目录
+  skills_dir: "./skills"
+
+curator:
+  # 策展间隔（小时）
+  interval_hours: 168        # 7 天
+  # active → stale 阈值（天）
+  stale_after_days: 30
+  # stale → archived 阈值（天）
+  archive_after_days: 90
+
+context:
+  # 上下文压缩阈值（占上下文窗口百分比）
+  threshold_percent: 0.75
+  # 上下文窗口大小
+  context_length: 128000
+  # 保护的头部消息数（不被压缩）
+  protect_first_n: 3
+  # 保护的尾部消息数（不被压缩）
+  protect_last_n: 6
+
+storage:
+  # SQLite 数据库路径
+  db_path: "./data/state.db"
