@@ -69,15 +69,14 @@ class SkillListItem(ListItem):
         self.use_count = use_count
 
     def compose(self) -> ComposeResult:
-        state_colors = {
-            "active": "green",
-            "stale": "yellow",
-            "archived": "dim",
+        state_markers = {
+            "active": ("●", "green"),
+            "stale": ("○", "yellow"),
+            "archived": ("◌", "dim"),
         }
-        color = state_colors.get(self.state, "white")
-        label_text = f"[{self.state[:3].upper()}] {self.skill_name}"
-        yield Label(Text(label_text, style=f"bold {color}"))
-        yield Label(Text(f" {self.desc[:25]}...", style="dim italic"))
+        marker, color = state_markers.get(self.state, ("•", "white"))
+        yield Label(Text.from_markup(f"[{color}]{marker}[/]  {self.skill_name}"))
+        yield Label(Text(f"   {self.desc[:22]}...", style="dim size-9 italic"))
 
 
 class SessionListItem(ListItem):
@@ -87,12 +86,12 @@ class SessionListItem(ListItem):
         super().__init__()
         self.session_id = session_id
         dt = datetime.fromtimestamp(created_at).strftime("%m-%d %H:%M")
-        self.display_summary = summary or f"会话 {dt}"
+        self.display_summary = summary or f"Untitled Session"
         self.dt_str = dt
 
     def compose(self) -> ComposeResult:
-        yield Label(Text(f"💬 {self.display_summary[:20]}", style="bold cyan"))
-        yield Label(Text(f"   {self.dt_str}", style="dim size-9"))
+        yield Label(Text.from_markup(f"• [cyan]{self.display_summary[:18]}[/]"))
+        yield Label(Text(f"  {self.dt_str}", style="dim size-8"))
 
 
 class MyAgentTUI(App):
@@ -119,26 +118,27 @@ class MyAgentTUI(App):
     #sidebar {
         width: 32;
         background: #181825;
-        border-right: solid #45475a;
-        padding: 1;
+        border-right: solid #313244;
+        padding: 1 1;
     }
 
     .sidebar-title {
         text-align: center;
-        background: #313244;
-        color: #89b4fa;
+        background: #24273a;
+        color: #f5c2e7;
         padding: 1;
         margin-bottom: 1;
         text-style: bold;
+        border: round #45475a;
     }
 
     .sidebar-section-header {
-        color: #f5c2e7;
+        color: #cba6f7;
         text-style: bold;
         margin-top: 1;
         margin-bottom: 0;
         padding-left: 1;
-        border-bottom: solid #45475a;
+        border-bottom: solid #313244;
     }
 
     #session_list, #skill_list {
@@ -147,36 +147,49 @@ class MyAgentTUI(App):
         height: 1fr;
         margin-bottom: 1;
         scrollbar-size-vertical: 1;
+        scrollbar-color: #313244;
+        scrollbar-color-hover: #f5c2e7;
+        scrollbar-color-active: #cba6f7;
+        scrollbar-background: #181825;
     }
 
     ListItem {
         padding: 0 1;
         background: transparent;
+        height: 3;
+        border-bottom: solid #24273a;
     }
 
     ListItem:hover {
-        background: #2b2b3c;
+        background: #313244;
+        color: #f5c2e7;
     }
 
     ListItem.--focus {
-        background: #313244;
+        background: #45475a;
+        color: #f5c2e7;
     }
 
     #chat_area {
         height: 1fr;
-        padding: 1;
+        padding: 1 2;
     }
 
     #chat_log {
         background: #1e1e2e;
-        border: solid #45475a;
+        border: round #313244;
         height: 1fr;
-        padding: 1;
+        padding: 1 2;
+        scrollbar-size-vertical: 1;
+        scrollbar-color: #313244;
+        scrollbar-color-hover: #f5c2e7;
+        scrollbar-color-active: #cba6f7;
+        scrollbar-background: #1e1e2e;
     }
 
     #status_bar {
         height: 1;
-        background: #11111b;
+        background: #181825;
         color: #a6e3a1;
         padding: 0 2;
         text-style: italic;
@@ -184,17 +197,17 @@ class MyAgentTUI(App):
 
     #input_area {
         height: auto;
-        margin: 1 1 0 1;
+        margin: 1 0 0 0;
     }
 
     #user_input {
         background: #181825;
-        border: tall #89b4fa;
+        border: round #313244;
         color: #cdd6f4;
     }
 
     #user_input:focus {
-        border: tall #a6e3a1;
+        border: round #f5c2e7;
     }
     """
 
@@ -322,7 +335,7 @@ class MyAgentTUI(App):
         chat_log.write(
             Panel(
                 Text.from_markup(
-                    "[bold cyan]🤖 自我学习 Agent TUI 客户端已成功启动！[/bold cyan]\n"
+                    "[bold cyan]自我学习 Agent TUI 客户端已成功启动！[/bold cyan]\n"
                     "在此你可以发起对话，Agent 在回答过程中会分析你的行为并可能保存为 [green]MEMORY[/green] 或提炼为 [magenta]SKILL[/magenta]。\n"
                     "快捷键: [bold yellow]Esc[/bold yellow] 切换输入焦点 | "
                     "[bold yellow]Ctrl+C[/bold yellow] 清空本屏 | "
