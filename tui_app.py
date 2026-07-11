@@ -37,6 +37,21 @@ from tools.memory_tool import MemoryStore
 from tools.session_search import SessionSearch
 from tools.skills_tool import SkillsManager
 
+# 自动加载 .env 环境变量文件
+import os
+try:
+    from dotenv import load_dotenv
+    load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
+except ImportError:
+    env_path = os.path.join(os.path.dirname(__file__), ".env")
+    if os.path.exists(env_path):
+        with open(env_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    os.environ[k.strip()] = v.strip()
+
 # 禁用全局 root logger 打印到 stdout，避免污染 Textual 界面
 logging.basicConfig(level=logging.WARNING, handlers=[logging.FileHandler("tui.log", encoding="utf-8")])
 logger = logging.getLogger("tui_app")

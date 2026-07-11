@@ -2,9 +2,9 @@
 
 model:
   # 主模型：用于对话和推理
-  primary: "gpt-4o"
+  primary: "gemini-3.5-flash-low"
   # 辅助模型：用于上下文压缩、策展审查（便宜快速）
-  auxiliary: "gpt-4o-mini"
+  auxiliary: "gemini-3.5-flash-low"
 
 memory:
   # 记忆字符上限
