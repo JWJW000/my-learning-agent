@@ -1,0 +1,264 @@
+2026-07-12 02:38:18,903 [agent.memory_manager] INFO: 记忆 Provider 'builtin' 成功注册
+2026-07-12 02:38:18,903 [tools.memory_tool] INFO: 成功加载历史记忆: 0 条 Agent 备忘, 1 条用户信息
+2026-07-12 03:00:58,141 [agent.memory_manager] INFO: 记忆 Provider 'builtin' 成功注册
+2026-07-12 03:00:58,141 [tools.memory_tool] INFO: 成功加载历史记忆: 0 条 Agent 备忘, 1 条用户信息
+2026-07-12 03:01:14,637 [tools.web_search] ERROR: DuckDuckGo 联网检索失败: The read operation timed out
+Traceback (most recent call last):
+  File "/Users/jiangyinhe/workSpace/my-learning-agent/tools/web_search.py", line 108, in search_ddg
+    with urllib.request.urlopen(req, timeout=10) as response:
+         ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.4/Frameworks/Python.framework/Versions/3.14/lib/python3.14/urllib/request.py", line 187, in urlopen
+    return opener.open(url, data, timeout)
+           ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.4/Frameworks/Python.framework/Versions/3.14/lib/python3.14/urllib/request.py", line 487, in open
+    response = self._open(req, data)
+  File "/opt/homebrew/Cellar/python@3.14/3.14.4/Frameworks/Python.framework/Versions/3.14/lib/python3.14/urllib/request.py", line 504, in _open
+    result = self._call_chain(self.handle_open, protocol, protocol +
+                              '_open', req)
+  File "/opt/homebrew/Cellar/python@3.14/3.14.4/Frameworks/Python.framework/Versions/3.14/lib/python3.14/urllib/request.py", line 464, in _call_chain
+    result = func(*args)
+  File "/opt/homebrew/Cellar/python@3.14/3.14.4/Frameworks/Python.framework/Versions/3.14/lib/python3.14/urllib/request.py", line 1369, in https_open
+    return self.do_open(http.client.HTTPSConnection, req,
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                        context=self._context)
+                        ^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.4/Frameworks/Python.framework/Versions/3.14/lib/python3.14/urllib/request.py", line 1325, in do_open
+    r = h.getresponse()
+  File "/opt/homebrew/Cellar/python@3.14/3.14.4/Frameworks/Python.framework/Versions/3.14/lib/python3.14/http/client.py", line 1450, in getresponse
+    response.begin()
+    ~~~~~~~~~~~~~~^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.4/Frameworks/Python.framework/Versions/3.14/lib/python3.14/http/client.py", line 336, in begin
+    version, status, reason = self._read_status()
+                              ~~~~~~~~~~~~~~~~~^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.4/Frameworks/Python.framework/Versions/3.14/lib/python3.14/http/client.py", line 297, in _read_status
+    line = str(self.fp.readline(_MAXLINE + 1), "iso-8859-1")
+               ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.4/Frameworks/Python.framework/Versions/3.14/lib/python3.14/socket.py", line 725, in readinto
+    return self._sock.recv_into(b)
+           ~~~~~~~~~~~~~~~~~~~~^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.4/Frameworks/Python.framework/Versions/3.14/lib/python3.14/ssl.py", line 1304, in recv_into
+    return self.read(nbytes, buffer)
+           ~~~~~~~~~^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.4/Frameworks/Python.framework/Versions/3.14/lib/python3.14/ssl.py", line 1138, in read
+    return self._sslobj.read(len, buffer)
+           ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+TimeoutError: The read operation timed out
+2026-07-12 03:10:34,442 [agent.memory_manager] INFO: 记忆 Provider 'builtin' 成功注册
+2026-07-12 03:10:34,442 [tools.memory_tool] INFO: 成功加载历史记忆: 0 条 Agent 备忘, 1 条用户信息
+2026-07-12 11:09:52,288 [agent.memory_manager] INFO: 记忆 Provider 'builtin' 成功注册
+2026-07-12 11:09:52,288 [tools.memory_tool] INFO: 成功加载历史记忆: 0 条 Agent 备忘, 1 条用户信息
+2026-07-12 11:10:04,386 [tools.web_search] INFO: Executing web search using: DuckDuckGoEngine with query: '今日新闻头条'
+2026-07-12 11:10:05,776 [tools.web_search] INFO: Downloading content from 3 target page(s)...
+2026-07-12 11:10:06,871 [tools.web_search.downloader] WARNING: Failed to download page: https://tophub.today/c/news, Status Code: 403
+2026-07-12 11:10:06,906 [tools.web_search] WARNING: Cleaned text has 0 chunks. Falling back to search snippets.
+2026-07-12 11:10:09,919 [tools.web_search] INFO: Executing web search using: DuckDuckGoEngine with query: '最新新闻 头条 2024'
+2026-07-12 11:10:13,618 [tools.web_search] INFO: Executing web search using: DuckDuckGoEngine with query: '百度热搜 榜单 2024'
+2026-07-12 11:10:16,643 [tools.web_search] INFO: Executing web search using: DuckDuckGoEngine with query: '今日头条 新闻 2024年'
+2026-07-12 11:10:20,410 [tools.web_search] INFO: Executing web search using: DuckDuckGoEngine with query: 'site:news.sina.com.cn'
+2026-07-12 11:10:23,535 [tools.web_search] INFO: Executing web search using: DuckDuckGoEngine with query: '网易 新闻 头条'
+2026-07-12 11:10:26,227 [tools.web_search] INFO: Executing web search using: DuckDuckGoEngine with query: 'china news today 2024'
+2026-07-12 11:10:30,377 [tools.web_search] INFO: Executing web search using: DuckDuckGoEngine with query: '腾讯新闻'
+2026-07-12 11:10:32,820 [tools.web_search] INFO: Executing web search using: DuckDuckGoEngine with query: '新华网 新闻'
+2026-07-12 11:10:35,585 [tools.web_search] INFO: Executing web search using: DuckDuckGoEngine with query: '澎湃新闻'
+2026-07-12 11:10:38,463 [tools.web_search] INFO: Executing web search using: DuckDuckGoEngine with query: '人民网 新闻'
+2026-07-12 11:10:41,222 [tools.web_search] INFO: Executing web search using: DuckDuckGoEngine with query: 'China news'
+2026-07-12 11:10:44,581 [tools.web_search] INFO: Executing web search using: DuckDuckGoEngine with query: '今日要闻'
+2026-07-12 11:10:47,262 [tools.web_search] INFO: Executing web search using: DuckDuckGoEngine with query: '今日热点 2024'
+2026-07-12 11:10:50,524 [tools.web_search] INFO: Executing web search using: DuckDuckGoEngine with query: 'today news china'
+2026-07-12 11:10:53,715 [tools.web_search] INFO: Executing web search using: DuckDuckGoEngine with query: '广西横州一对小兄妹被洪水卷走 2024'
+2026-07-12 11:10:56,991 [tools.web_search] INFO: Executing web search using: DuckDuckGoEngine with query: 'site:toutiao.com'
+2026-07-12 11:11:00,852 [tools.web_search] INFO: Executing web search using: DuckDuckGoEngine with query: 'tophub.today'
+2026-07-12 11:11:03,544 [tools.web_search] INFO: Executing web search using: DuckDuckGoEngine with query: 'https://news.google.com/home?hl=zh-CN&gl=CN&ceid=CN:zh-Hans'
+2026-07-12 11:11:08,235 [tools.web_search] INFO: Executing web search using: DuckDuckGoEngine with query: '国内新闻'
+2026-07-12 11:11:11,534 [tools.web_search] INFO: Executing web search using: DuckDuckGoEngine with query: '国际新闻'
+2026-07-12 11:11:14,786 [tools.web_search] INFO: Executing web search using: DuckDuckGoEngine with query: 'site:tophub.today'
+2026-07-12 11:11:17,681 [tools.web_search] INFO: Executing web search using: DuckDuckGoEngine with query: '今日头条'
+2026-07-12 11:11:41,022 [tools.web_search] INFO: Executing web search using: DuckDuckGoEngine with query: '北京时间'
+2026-07-12 11:11:43,929 [tools.web_search] INFO: Executing web search using: DuckDuckGoEngine with query: 'current date time'
+2026-07-12 11:11:47,064 [tools.web_search] INFO: Executing web search using: DuckDuckGoEngine with query: 'today date'
+2026-07-12 11:11:50,579 [tools.web_search] INFO: Executing web search using: DuckDuckGoEngine with query: 'date'
+2026-07-12 11:11:53,254 [tools.web_search] INFO: Executing web search using: DuckDuckGoEngine with query: 'time.is'
+2026-07-12 11:11:57,464 [tools.web_search] INFO: Executing web search using: DuckDuckGoEngine with query: 'cal'
+2026-07-12 11:12:00,100 [tools.web_search] INFO: Executing web search using: DuckDuckGoEngine with query: '2024 calendar'
+2026-07-12 11:12:03,039 [tools.web_search] INFO: Executing web search using: DuckDuckGoEngine with query: 'what day is today'
+2026-07-12 11:12:36,624 [tools.web_search] INFO: Executing web search using: DuckDuckGoEngine with query: 'worldtimeapi'
+2026-07-12 11:12:40,399 [tools.web_search] INFO: Executing web search using: DuckDuckGoEngine with query: 'timeapi'
+2026-07-12 11:12:44,304 [tools.web_search] INFO: Executing web search using: DuckDuckGoEngine with query: 'get current time api'
+2026-07-12 11:12:50,591 [tools.web_search] INFO: Executing web search using: DuckDuckGoEngine with query: 'public api get current time json'
+2026-07-12 11:12:53,626 [tools.web_search] INFO: Executing web search using: DuckDuckGoEngine with query: 'timeapi.org'
+2026-07-12 11:12:56,469 [tools.web_search] INFO: Executing web search using: DuckDuckGoEngine with query: 'how to get current date via search'
+2026-07-12 11:13:00,978 [tools.web_search] INFO: Executing web search using: DuckDuckGoEngine with query: '北京时间 百度'
+2026-07-12 19:46:58,691 [agent.memory_manager] INFO: 记忆 Provider 'builtin' 成功注册
+2026-07-12 19:46:58,692 [tools.memory_tool] INFO: 成功加载历史记忆: 0 条 Agent 备忘, 1 条用户信息
+2026-07-12 19:47:58,194 [agent.memory_manager] INFO: 记忆 Provider 'builtin' 成功注册
+2026-07-12 19:47:58,195 [tools.memory_tool] INFO: 成功加载历史记忆: 0 条 Agent 备忘, 1 条用户信息
+2026-07-12 19:48:11,340 [__main__] ERROR: Agent 对话执行失败
+Traceback (most recent call last):
+  File "/Users/jiangyinhe/workSpace/my-learning-agent/main.py", line 239, in main
+    response = agent.run_turn(user_input, on_chunk=print_chunk)
+  File "/Users/jiangyinhe/workSpace/my-learning-agent/agent/run_agent.py", line 170, in run_turn
+    response_text = self._call_llm_loop(on_chunk)
+  File "/Users/jiangyinhe/workSpace/my-learning-agent/agent/run_agent.py", line 215, in _call_llm_loop
+    response = self.client.chat.completions.create(
+        model=self.config.model.primary,
+    ...<3 lines>...
+        stream_options={"include_usage": True},
+    )
+  File "/Users/jiangyinhe/workSpace/my-learning-agent/.venv/lib/python3.14/site-packages/openai/_utils/_utils.py", line 298, in wrapper
+    return func(*args, **kwargs)
+  File "/Users/jiangyinhe/workSpace/my-learning-agent/.venv/lib/python3.14/site-packages/openai/resources/chat/completions/completions.py", line 1281, in create
+    return self._post(
+           ~~~~~~~~~~^
+        "/chat/completions",
+        ^^^^^^^^^^^^^^^^^^^^
+    ...<53 lines>...
+        stream_cls=Stream[ChatCompletionChunk],
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/jiangyinhe/workSpace/my-learning-agent/.venv/lib/python3.14/site-packages/openai/_base_client.py", line 1332, in post
+    return cast(ResponseT, self.request(cast_to, opts, stream=stream, stream_cls=stream_cls))
+                           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jiangyinhe/workSpace/my-learning-agent/.venv/lib/python3.14/site-packages/openai/_base_client.py", line 1105, in request
+    raise self._make_status_error_from_response(err.response) from None
+openai.BadRequestError: Error code: 400 - {'error': {'message': 'Duplicate function declaration found: memory_save', 'type': 'upstream_error', 'param': '', 'code': 400}}
+2026-07-12 19:50:25,113 [agent.memory_manager] INFO: 记忆 Provider 'builtin' 成功注册
+2026-07-12 19:50:25,114 [tools.memory_tool] INFO: 成功加载历史记忆: 0 条 Agent 备忘, 1 条用户信息
+2026-07-12 19:50:34,532 [__main__] ERROR: Agent 对话执行失败
+Traceback (most recent call last):
+  File "/Users/jiangyinhe/workSpace/my-learning-agent/main.py", line 239, in main
+    response = agent.run_turn(user_input, on_chunk=print_chunk)
+  File "/Users/jiangyinhe/workSpace/my-learning-agent/agent/run_agent.py", line 170, in run_turn
+    response_text = self._call_llm_loop(on_chunk)
+  File "/Users/jiangyinhe/workSpace/my-learning-agent/agent/run_agent.py", line 215, in _call_llm_loop
+    response = self.client.chat.completions.create(
+        model=self.config.model.primary,
+    ...<3 lines>...
+        stream_options={"include_usage": True},
+    )
+  File "/Users/jiangyinhe/workSpace/my-learning-agent/.venv/lib/python3.14/site-packages/openai/_utils/_utils.py", line 298, in wrapper
+    return func(*args, **kwargs)
+  File "/Users/jiangyinhe/workSpace/my-learning-agent/.venv/lib/python3.14/site-packages/openai/resources/chat/completions/completions.py", line 1281, in create
+    return self._post(
+           ~~~~~~~~~~^
+        "/chat/completions",
+        ^^^^^^^^^^^^^^^^^^^^
+    ...<53 lines>...
+        stream_cls=Stream[ChatCompletionChunk],
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/jiangyinhe/workSpace/my-learning-agent/.venv/lib/python3.14/site-packages/openai/_base_client.py", line 1332, in post
+    return cast(ResponseT, self.request(cast_to, opts, stream=stream, stream_cls=stream_cls))
+                           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jiangyinhe/workSpace/my-learning-agent/.venv/lib/python3.14/site-packages/openai/_base_client.py", line 1105, in request
+    raise self._make_status_error_from_response(err.response) from None
+openai.BadRequestError: Error code: 400 - {'error': {'message': 'Duplicate function declaration found: memory_save', 'type': 'upstream_error', 'param': '', 'code': 400}}
+2026-07-12 22:32:23,230 [agent.memory_manager] INFO: 记忆 Provider 'builtin' 成功注册
+2026-07-12 22:32:23,231 [tools.memory_tool] INFO: 成功加载历史记忆: 0 条 Agent 备忘, 1 条用户信息
+2026-07-12 22:32:51,994 [tools.web_search] INFO: Executing web search using: DuckDuckGoEngine with query: '今日新闻热点'
+2026-07-12 22:33:02,009 [tools.web_search.engines] ERROR: DuckDuckGo HTML search request failed: <urlopen error _ssl.c:1063: The handshake operation timed out>
+2026-07-12 22:33:18,418 [__main__] ERROR: Agent 对话执行失败
+Traceback (most recent call last):
+  File "/Users/jiangyinhe/workSpace/my-learning-agent/.venv/lib/python3.14/site-packages/httpx/_transports/default.py", line 101, in map_httpcore_exceptions
+    yield
+  File "/Users/jiangyinhe/workSpace/my-learning-agent/.venv/lib/python3.14/site-packages/httpx/_transports/default.py", line 250, in handle_request
+    resp = self._pool.handle_request(req)
+  File "/Users/jiangyinhe/workSpace/my-learning-agent/.venv/lib/python3.14/site-packages/httpcore/_sync/connection_pool.py", line 256, in handle_request
+    raise exc from None
+  File "/Users/jiangyinhe/workSpace/my-learning-agent/.venv/lib/python3.14/site-packages/httpcore/_sync/connection_pool.py", line 236, in handle_request
+    response = connection.handle_request(
+        pool_request.request
+    )
+  File "/Users/jiangyinhe/workSpace/my-learning-agent/.venv/lib/python3.14/site-packages/httpcore/_sync/http_proxy.py", line 316, in handle_request
+    stream = stream.start_tls(**kwargs)
+  File "/Users/jiangyinhe/workSpace/my-learning-agent/.venv/lib/python3.14/site-packages/httpcore/_sync/http11.py", line 376, in start_tls
+    return self._stream.start_tls(ssl_context, server_hostname, timeout)
+           ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jiangyinhe/workSpace/my-learning-agent/.venv/lib/python3.14/site-packages/httpcore/_backends/sync.py", line 154, in start_tls
+    with map_exceptions(exc_map):
+         ~~~~~~~~~~~~~~^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.4/Frameworks/Python.framework/Versions/3.14/lib/python3.14/contextlib.py", line 162, in __exit__
+    self.gen.throw(value)
+    ~~~~~~~~~~~~~~^^^^^^^
+  File "/Users/jiangyinhe/workSpace/my-learning-agent/.venv/lib/python3.14/site-packages/httpcore/_exceptions.py", line 14, in map_exceptions
+    raise to_exc(exc) from exc
+httpcore.ConnectTimeout: _ssl.c:1063: The handshake operation timed out
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/jiangyinhe/workSpace/my-learning-agent/.venv/lib/python3.14/site-packages/openai/_base_client.py", line 1037, in request
+    response = self._send_request(
+        request,
+        stream=stream or self._should_stream_response_body(request=request),
+        **kwargs,
+    )
+  File "/Users/jiangyinhe/workSpace/my-learning-agent/.venv/lib/python3.14/site-packages/openai/_client.py", line 478, in _send_request
+    response = self._send_with_auth_retry(request, stream=stream, **kwargs)
+  File "/Users/jiangyinhe/workSpace/my-learning-agent/.venv/lib/python3.14/site-packages/openai/_client.py", line 456, in _send_with_auth_retry
+    response = super()._send_request(request, stream=stream, **kwargs)
+  File "/Users/jiangyinhe/workSpace/my-learning-agent/.venv/lib/python3.14/site-packages/openai/_base_client.py", line 964, in _send_request
+    return self._client.send(request, stream=stream, **kwargs)
+           ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jiangyinhe/workSpace/my-learning-agent/.venv/lib/python3.14/site-packages/httpx/_client.py", line 914, in send
+    response = self._send_handling_auth(
+        request,
+    ...<2 lines>...
+        history=[],
+    )
+  File "/Users/jiangyinhe/workSpace/my-learning-agent/.venv/lib/python3.14/site-packages/httpx/_client.py", line 942, in _send_handling_auth
+    response = self._send_handling_redirects(
+        request,
+        follow_redirects=follow_redirects,
+        history=history,
+    )
+  File "/Users/jiangyinhe/workSpace/my-learning-agent/.venv/lib/python3.14/site-packages/httpx/_client.py", line 979, in _send_handling_redirects
+    response = self._send_single_request(request)
+  File "/Users/jiangyinhe/workSpace/my-learning-agent/.venv/lib/python3.14/site-packages/httpx/_client.py", line 1014, in _send_single_request
+    response = transport.handle_request(request)
+  File "/Users/jiangyinhe/workSpace/my-learning-agent/.venv/lib/python3.14/site-packages/httpx/_transports/default.py", line 249, in handle_request
+    with map_httpcore_exceptions():
+         ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.4/Frameworks/Python.framework/Versions/3.14/lib/python3.14/contextlib.py", line 162, in __exit__
+    self.gen.throw(value)
+    ~~~~~~~~~~~~~~^^^^^^^
+  File "/Users/jiangyinhe/workSpace/my-learning-agent/.venv/lib/python3.14/site-packages/httpx/_transports/default.py", line 118, in map_httpcore_exceptions
+    raise mapped_exc(message) from exc
+httpx.ConnectTimeout: _ssl.c:1063: The handshake operation timed out
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/jiangyinhe/workSpace/my-learning-agent/main.py", line 239, in main
+    response = agent.run_turn(user_input, on_chunk=print_chunk)
+  File "/Users/jiangyinhe/workSpace/my-learning-agent/agent/run_agent.py", line 170, in run_turn
+    response_text = self._call_llm_loop(on_chunk)
+  File "/Users/jiangyinhe/workSpace/my-learning-agent/agent/run_agent.py", line 222, in _call_llm_loop
+    response = self.client.chat.completions.create(
+        model=self.config.model.primary,
+    ...<3 lines>...
+        stream_options={"include_usage": True},
+    )
+  File "/Users/jiangyinhe/workSpace/my-learning-agent/.venv/lib/python3.14/site-packages/openai/_utils/_utils.py", line 298, in wrapper
+    return func(*args, **kwargs)
+  File "/Users/jiangyinhe/workSpace/my-learning-agent/.venv/lib/python3.14/site-packages/openai/resources/chat/completions/completions.py", line 1281, in create
+    return self._post(
+           ~~~~~~~~~~^
+        "/chat/completions",
+        ^^^^^^^^^^^^^^^^^^^^
+    ...<53 lines>...
+        stream_cls=Stream[ChatCompletionChunk],
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/jiangyinhe/workSpace/my-learning-agent/.venv/lib/python3.14/site-packages/openai/_base_client.py", line 1332, in post
+    return cast(ResponseT, self.request(cast_to, opts, stream=stream, stream_cls=stream_cls))
+                           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jiangyinhe/workSpace/my-learning-agent/.venv/lib/python3.14/site-packages/openai/_base_client.py", line 1055, in request
+    raise APITimeoutError(request=request) from err
+openai.APITimeoutError: Request timed out.
+2026-07-12 22:33:43,360 [tools.web_search] INFO: Executing web search using: DuckDuckGoEngine with query: '今日新闻 2025'
+2026-07-12 22:33:58,945 [tools.web_search] INFO: Executing web search using: DuckDuckGoEngine with query: '百度热搜榜'
+2026-07-12 22:34:04,296 [tools.web_search] INFO: Executing web search using: DuckDuckGoEngine with query: '新闻'
+2026-07-12 22:34:09,489 [tools.web_search] INFO: Executing web search using: DuckDuckGoEngine with query: 'China news today 2025'

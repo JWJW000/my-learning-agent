@@ -8,6 +8,7 @@ build/
 .eggs/
 *.egg
 data/*.db
+data/
 data/MEMORY.md
 data/USER.md
 skills/*/

@@ -1,0 +1,30 @@
+ERROR:tui_app:Agent 对话执行异常
+Traceback (most recent call last):
+  File "/Users/jiangyinhe/workSpace/my-learning-agent/tui_app.py", line 454, in run_turn_worker
+    response = self.agent.run_turn(final_input)
+  File "/Users/jiangyinhe/workSpace/my-learning-agent/agent/run_agent.py", line 159, in run_turn
+    response_text = self._call_llm_loop()
+  File "/Users/jiangyinhe/workSpace/my-learning-agent/agent/run_agent.py", line 195, in _call_llm_loop
+    response = self.client.chat.completions.create(
+        model=self.config.model.primary,
+        messages=api_messages,
+        tools=all_tools if all_tools else openai.NOT_GIVEN,
+    )
+  File "/Users/jiangyinhe/workSpace/my-learning-agent/.venv/lib/python3.14/site-packages/openai/_utils/_utils.py", line 298, in wrapper
+    return func(*args, **kwargs)
+  File "/Users/jiangyinhe/workSpace/my-learning-agent/.venv/lib/python3.14/site-packages/openai/resources/chat/completions/completions.py", line 1281, in create
+    return self._post(
+           ~~~~~~~~~~^
+        "/chat/completions",
+        ^^^^^^^^^^^^^^^^^^^^
+    ...<53 lines>...
+        stream_cls=Stream[ChatCompletionChunk],
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/jiangyinhe/workSpace/my-learning-agent/.venv/lib/python3.14/site-packages/openai/_base_client.py", line 1332, in post
+    return cast(ResponseT, self.request(cast_to, opts, stream=stream, stream_cls=stream_cls))
+                           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jiangyinhe/workSpace/my-learning-agent/.venv/lib/python3.14/site-packages/openai/_base_client.py", line 1105, in request
+    raise self._make_status_error_from_response(err.response) from None
+openai.PermissionDeniedError: Your request was blocked.
