@@ -17,8 +17,8 @@ import yaml
 @dataclass
 class ModelConfig:
     """LLM 模型配置。"""
-    primary: str = "gpt-4o"           # 用于日常交互与深度推理的主模型
-    auxiliary: str = "gpt-4o-mini"     # 用于上下文总结、策展分类等轻量级/异步任务的辅助模型
+    primary: str = "gemini-3.5-flash-low"           # 用于日常交互与深度推理的主模型
+    auxiliary: str = "gemini-3.5-flash-low"     # 用于上下文总结、策展分类等轻量级/异步任务的辅助模型
 
 
 @dataclass

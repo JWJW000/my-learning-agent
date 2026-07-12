@@ -52,12 +52,19 @@ console = Console()
 
 
 def setup_logging() -> None:
-    """初始化日志配置，向控制台输出 INFO 及以上级别的日志。"""
+    """初始化日志配置，仅向控制台输出 WARNING 及以上级别的日志，将详细日志记录到文件。"""
+    # 全局配置 root logger 输出到日志文件，防止污染 stdout/stderr
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
-        handlers=[logging.StreamHandler()],
+        handlers=[
+            logging.FileHandler("agent.log", encoding="utf-8")
+        ],
     )
+
+    # 额外限制 httpx 和 openai 第三方库的日志级别为 WARNING，防止打扰用户
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("openai").setLevel(logging.WARNING)
 
 
 def main() -> None:
@@ -124,27 +131,16 @@ def main() -> None:
         archive_after_days=config.curator.archive_after_days,
     )
 
-    # -- 6. 组装 Agent 核心并注册工具 -----------------------------------------
+    # -- 6. 组装 Agent 核心并注册依赖 ----------------------------------------
     agent = Agent(config)
     agent.memory_manager = memory_manager
     agent.skill_manager = skills_manager
     agent.session_id = session_id
 
-    # 将技能工具(skills_list, skill_view, skill_create 等)动态注入到 Agent 运行时中
-    for schema in skills_manager.get_tool_schemas():
-        func = schema["function"]
-        agent._tools.append(schema)
-        agent._tool_handlers[func["name"]] = lambda _tn=func["name"], **kw: (
-            skills_manager.handle_tool_call(_tn, kw)
-        )
-
-    # 将跨会话搜索工具(session_search)动态注入到 Agent 运行时中
-    for schema in session_search.get_tool_schemas():
-        func = schema["function"]
-        agent._tools.append(schema)
-        agent._tool_handlers[func["name"]] = lambda _tn=func["name"], **kw: (
-            session_search.handle_tool_call(_tn, kw)
-        )
+    # -- 6.5. 初始化联网搜索与跨会话搜索组件（工具已通过 tools 包加载自注册，这里仅挂载实例依赖） ---
+    from tools.web_search import WebSearch
+    agent.web_search = WebSearch(openai_client=agent.client)
+    agent.session_search = session_search
 
     # 启动时构建并冻结 System Prompt (快照模式，会话期间写入记忆不改变 prompt，保证 cache 稳定)
     agent.build_system_prompt()
@@ -233,20 +229,29 @@ def main() -> None:
 
         # -- 执行 Agent 对话轮次 ----------------------------------------------
         try:
-            # 运行 Agent 轮次（内部处理前序加载、LLM 调用、工具循环、后序存储、及上下文自动压缩）
-            response = agent.run_turn(user_input)
+            # 渲染并输出 Agent 回复内容前缀
+            console.print("\n[bold cyan]Agent:[/bold cyan] ", end="")
+
+            # 运行 Agent 轮次并流式实时打印（内部处理前序加载、LLM 调用、工具循环、后序存储、及上下文自动压缩）
+            def print_chunk(chunk: str) -> None:
+                console.print(chunk, end="")
+
+            response = agent.run_turn(user_input, on_chunk=print_chunk)
+            console.print()  # 换行
 
             # 将本轮的交互记录持久化到会话数据库中
             store.save_message(session_id, "user", user_input)
             store.save_message(session_id, "assistant", response)
 
-            # 渲染并输出 Agent 回复内容
-            console.print()
-            try:
-                console.print(Markdown(response))
-            except Exception:
-                console.print(response)
-            console.print()
+            # 触发摘要生成：第一轮对话后生成，或者每隔 5 轮重新优化一次标题
+            user_messages_count = sum(1 for m in agent.messages if m.get("role") == "user")
+            if user_messages_count == 1 or user_messages_count % 5 == 0:
+                summary = agent.generate_summary()
+                if summary:
+                    store.update_session_summary(session_id, summary)
+
+            # 在流式结束后，用 Markdown 格式重新渲染以防排版缺失，可选；或者可以直接使用 streamed output。
+            # 为了 REPL 终端清爽，我们不再重复打印 Markdown 块，仅在流式中输出。
 
         except KeyboardInterrupt:
             console.print("\n[yellow]对话被用户手动中断。[/yellow]")
@@ -256,6 +261,12 @@ def main() -> None:
 
     # -- 清理与会话结束生命周期 ----------------------------------------------
     console.print("\n[dim]正在结束当前会话...[/dim]")
+    try:
+        summary = agent.generate_summary()
+        if summary:
+            store.update_session_summary(session_id, summary)
+    except Exception as exc:
+        logger.exception("结束会话生成摘要失败")
     agent.end_session()
     store.close()
     console.print("[cyan]再见！[/cyan]")

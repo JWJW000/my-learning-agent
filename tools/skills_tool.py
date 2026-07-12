@@ -170,121 +170,7 @@ class SkillsManager:
         self._cache.clear()
         return f"Skill '{name}' archived (recoverable)"
 
-    # -- 大模型可见的工具定义 Schemas 组装 ----------------------------------------
-
-    def get_tool_schemas(self) -> list[dict[str, Any]]:
-        """向外输出 SkillsManager 提供的一整套工具的 API 定义。"""
-        return [
-            {
-                "type": "function",
-                "function": {
-                    "name": "skills_list",
-                    "description": "List available skills (metadata only). Use skill_view to see full content.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "state": {
-                                "type": "string",
-                                "enum": ["active", "stale", "archived", "all"],
-                                "description": "Filter by state (default: active)",
-                            },
-                        },
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "skill_view",
-                    "description": "Load full content of a skill by name.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "name": {"type": "string", "description": "Skill name"},
-                        },
-                        "required": ["name"],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "skill_create",
-                    "description": (
-                        "Create a new reusable skill from experience. Include clear "
-                        "steps, examples, and notes. Use kebab-case name."
-                    ),
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "name": {
-                                "type": "string",
-                                "description": "Skill name (kebab-case, ≤64 chars)",
-                            },
-                            "description": {
-                                "type": "string",
-                                "description": "One-line description",
-                            },
-                            "content": {
-                                "type": "string",
-                                "description": "Markdown body with steps, examples, notes",
-                            },
-                            "category": {
-                                "type": "string",
-                                "description": "Category directory (default: general)",
-                            },
-                        },
-                        "required": ["name", "description", "content"],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "skill_delete",
-                    "description": "Archive a skill (recoverable, never hard-deletes).",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "name": {"type": "string", "description": "Skill name to archive"},
-                        },
-                        "required": ["name"],
-                    },
-                },
-            },
-        ]
-
-    def handle_tool_call(self, tool_name: str, arguments: dict[str, Any]) -> str:
-        """处理大模型发起的技能工具调用逻辑派发。"""
-        import json
-
-        match tool_name:
-            case "skills_list":
-                state = arguments.get("state")
-                if state == "all":
-                    state = None
-                skills = self.list_skills(state=state)
-                # 剔除 path 信息以防止内部真实系统文件路径泄露给模型
-                cleaned_skills = []
-                for s in skills:
-                    s_copy = dict(s)
-                    s_copy.pop("path", None)
-                    cleaned_skills.append(s_copy)
-                return json.dumps(cleaned_skills, ensure_ascii=False, indent=2)
-            case "skill_view":
-                content = self.view_skill(arguments["name"])
-                return content or f"Skill '{arguments['name']}' not found"
-            case "skill_create":
-                return self.create_skill(
-                    name=arguments["name"],
-                    description=arguments["description"],
-                    content=arguments["content"],
-                    category=arguments.get("category", "general"),
-                )
-            case "skill_delete":
-                return self.delete_skill(arguments["name"])
-            case _:
-                return f"Unknown skill tool: {tool_name}"
+    # -- 内存缓存管理逻辑 ------------------------------------------------------
 
     # -- 内存缓存管理逻辑 ------------------------------------------------------
 
@@ -357,3 +243,185 @@ class SkillsManager:
         fm["metadata"]["state"] = "active"  # 发生调用自动复活回活跃状态
         self._write_frontmatter(path, fm)
         self._cache.clear()
+
+
+# -- 自动注册至通用工具中心 ----------------------------------------------------
+from tools.registry import registry
+
+SKILLS_LIST_SCHEMA = {
+    "description": "List available skills (metadata only). Use skill_view to see full content.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "state": {
+                "type": "string",
+                "enum": ["active", "stale", "archived", "all"],
+                "description": "Filter by state (default: active)",
+            },
+        },
+    },
+}
+
+SKILL_VIEW_SCHEMA = {
+    "description": "Load full content of a skill by name.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "description": "Skill name"},
+        },
+        "required": ["name"],
+    },
+}
+
+SKILL_CREATE_SCHEMA = {
+    "description": "Create a new reusable skill from experience. Include clear steps, examples, and notes. Use kebab-case name.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "description": "Skill name (kebab-case, ≤64 chars)"},
+            "description": {"type": "string", "description": "One-line description"},
+            "content": {"type": "string", "description": "Markdown body with steps, examples, notes"},
+            "category": {"type": "string", "description": "Category directory (default: general)"},
+        },
+        "required": ["name", "description", "content"],
+    },
+}
+
+SKILL_DELETE_SCHEMA = {
+    "description": "Archive a skill (recoverable, never hard-deletes).",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "description": "Skill name to archive"},
+        },
+        "required": ["name"],
+    },
+}
+
+# 内部处理函数逻辑，原先在 handle_tool_call 里
+def _handle_skills_list(state=None, **kwargs):
+    import json
+    agent = kwargs["agent"]
+    skills = agent.skill_manager.list_skills(state=state)
+    cleaned_skills = []
+    for s in skills:
+        s_copy = dict(s)
+        s_copy.pop("path", None)
+        cleaned_skills.append(s_copy)
+    return json.dumps(cleaned_skills, ensure_ascii=False, indent=2)
+
+registry.register(
+    name="skills_list",
+    toolset="skills",
+    schema=SKILLS_LIST_SCHEMA,
+    handler=_handle_skills_list,
+)
+
+registry.register(
+    name="skill_view",
+    toolset="skills",
+    schema=SKILL_VIEW_SCHEMA,
+    handler=lambda name, **kwargs: kwargs["agent"].skill_manager.view_skill(name) or f"Skill '{name}' not found",
+)
+
+registry.register(
+    name="skill_create",
+    toolset="skills",
+    schema=SKILL_CREATE_SCHEMA,
+    handler=lambda name, description, content, category="general", **kwargs: kwargs["agent"].skill_manager.create_skill(
+        name=name, description=description, content=content, category=category
+    ),
+)
+
+registry.register(
+    name="skill_delete",
+    toolset="skills",
+    schema=SKILL_DELETE_SCHEMA,
+    handler=lambda name, **kwargs: kwargs["agent"].skill_manager.delete_skill(name),
+)
+
+
+
+# -- 自动注册至通用工具中心 ----------------------------------------------------
+from tools.registry import registry
+
+SKILLS_LIST_SCHEMA = {
+    "description": "List available skills (metadata only). Use skill_view to see full content.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "state": {
+                "type": "string",
+                "enum": ["active", "stale", "archived", "all"],
+                "description": "Filter by state (default: active)",
+            },
+        },
+    },
+}
+
+SKILL_VIEW_SCHEMA = {
+    "description": "Load full content of a skill by name.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "description": "Skill name"},
+        },
+        "required": ["name"],
+    },
+}
+
+SKILL_CREATE_SCHEMA = {
+    "description": "Create a new reusable skill from experience. Include clear steps, examples, and notes. Use kebab-case name.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "description": "Skill name (kebab-case, ≤64 chars)"},
+            "description": {"type": "string", "description": "One-line description"},
+            "content": {"type": "string", "description": "Markdown body with steps, examples, notes"},
+            "category": {"type": "string", "description": "Category directory (default: general)"},
+        },
+        "required": ["name", "description", "content"],
+    },
+}
+
+SKILL_DELETE_SCHEMA = {
+    "description": "Archive a skill (recoverable, never hard-deletes).",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "description": "Skill name to archive"},
+        },
+        "required": ["name"],
+    },
+}
+
+registry.register(
+    name="skills_list",
+    toolset="skills",
+    schema=SKILLS_LIST_SCHEMA,
+    handler=lambda state=None, **kwargs: kwargs["agent"].skill_manager.handle_tool_call("skills_list", {"state": state}),
+)
+
+registry.register(
+    name="skill_view",
+    toolset="skills",
+    schema=SKILL_VIEW_SCHEMA,
+    handler=lambda name, **kwargs: kwargs["agent"].skill_manager.handle_tool_call("skill_view", {"name": name}),
+)
+
+registry.register(
+    name="skill_create",
+    toolset="skills",
+    schema=SKILL_CREATE_SCHEMA,
+    handler=lambda name, description, content, category="general", **kwargs: kwargs["agent"].skill_manager.handle_tool_call(
+        "skill_create", {"name": name, "description": description, "content": content, "category": category}
+    ),
+)
+
+registry.register(
+    name="skill_delete",
+    toolset="skills",
+    schema=SKILL_DELETE_SCHEMA,
+    handler=lambda name, **kwargs: kwargs["agent"].skill_manager.handle_tool_call("skill_delete", {"name": name}),
+)
+

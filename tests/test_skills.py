@@ -75,10 +75,11 @@ class TestSkillsManager:
         assert "prog-test" in summary
         assert "Long content" not in summary  # Only metadata, not full content
 
-    def test_tool_schemas(self, skills_manager):
-        schemas = skills_manager.get_tool_schemas()
-        names = [s["function"]["name"] for s in schemas]
-        assert "skills_list" in names
-        assert "skill_view" in names
-        assert "skill_create" in names
-        assert "skill_delete" in names
+    def test_tool_schemas(self):
+        from tools.registry import registry
+        all_names = registry.get_all_tool_names()
+        assert "skills_list" in all_names
+        assert "skill_view" in all_names
+        assert "skill_create" in all_names
+        assert "skill_delete" in all_names
+

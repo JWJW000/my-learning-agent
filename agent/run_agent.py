@@ -19,6 +19,7 @@ import openai
 from agent.config import AppConfig
 from agent.context_compressor import ContextCompressor
 from agent.memory_manager import MemoryManager
+from tools.registry import registry
 
 logger = logging.getLogger(__name__)
 
@@ -36,13 +37,16 @@ class Agent:
         # 会话历史消息缓冲
         self.messages: list[dict[str, Any]] = []
 
-        # 注册的工具定义和对应的 Python 回调映射表
+        # 注册的临时工具定义和对应的 Python 回调映射表（主要供单元测试/临时 Mock 使用）
         self._tools: list[dict[str, Any]] = []
         self._tool_handlers: dict[str, Callable] = {}
 
         # 外部子系统引用（构建后由 main.py 动态注入）
         self.memory_manager: MemoryManager | None = None
         self.skill_manager = None  # 在 main.py 中实例化后被挂载到此处
+        self.web_search = None  # 动态注入
+        self.session_search = None  # 动态注入
+
 
         # 上下文窗口压缩处理器
         self.compressor = ContextCompressor(
@@ -80,12 +84,14 @@ class Agent:
     ) -> None:
         """向 Agent 注册一个可供 LLM 选择并执行的 Python 外部工具。
 
-        Args:
-            name: 工具函数名称（即大模型返回中 tool_calls 的函数名称）。
-            description: 详细工具功能描述，这是大模型进行语义路由的核心参考。
-            parameters: 基于 JSON Schema 的参数定义规范（类型、必填项等）。
-            handler: 工具被调用时实际执行的 Python 可调用对象（如函数或方法）。
+        通过代理调用 registry.register 将其加入通用注册表中，以满足单元测试的动态 mock 需要。
         """
+        registry.register(
+            name=name,
+            toolset="custom",
+            schema={"description": description, "parameters": parameters},
+            handler=lambda **kwargs: handler(**{k: v for k, v in kwargs.items() if k != "agent"}),
+        )
         self._tools.append(
             {
                 "type": "function",
@@ -135,7 +141,7 @@ class Agent:
 
     # -- 核心对话轮次主循环 ----------------------------------------------------
 
-    def run_turn(self, user_input: str) -> str:
+    def run_turn(self, user_input: str, on_chunk: Callable[[str], None] | None = None) -> str:
         """执行单轮次的用户对话交互。
 
         执行链路流程：
@@ -148,6 +154,7 @@ class Agent:
 
         Args:
             user_input: 用户的自然语言输入文本。
+            on_chunk: 用于在最后一轮纯文本输出时实时接收流式块的回调函数。
 
         Returns:
             str: 助手最终返回给用户的回复文本。
@@ -160,7 +167,7 @@ class Agent:
         self.messages.append({"role": "user", "content": user_input})
 
         # 3. 执行 Tool-Calling 多级交互循环
-        response_text = self._call_llm_loop()
+        response_text = self._call_llm_loop(on_chunk)
 
         # 4. 对话后的记忆回写与同步
         if self.memory_manager:
@@ -173,17 +180,26 @@ class Agent:
 
         return response_text
 
-    def _call_llm_loop(self) -> str:
+    def _call_llm_loop(self, on_chunk: Callable[[str], None] | None = None) -> str:
         """内部工具交互核心循环。
 
         LLM 可能会返回一个或多个 `tool_calls`。系统执行这些函数，将结果以 `role="tool"`
         的角色格式化并追加入上下文历史中，然后再次请求 LLM。
-        这一循环将持续运行，直到 LLM 不再返回 `tool_calls`（即产生最终的纯文本回复 Choice）为止。
+        这一循环将持续运行，直到 LLM 不再返回 `tool_calls` 为止。
         """
-        # 组装当前的工具集：包含 Agent 自身的工具（如技能管理与会话搜索）以及各记忆 Provider 提供的工具
-        all_tools = list(self._tools)
+        # 从全局通用注册表 (registry) 获取所有注册的工具，并合并自身注册的 Mock 工具
+        all_tool_names = set(registry.get_all_tool_names())
+        all_tools = registry.get_definitions(all_tool_names)
+
+        # 兼容性合并：如果 self._tools 里有 registry 尚未收录的临时 Mock 工具，进行追加
+        registered_names = {t["function"]["name"] for t in all_tools}
+        for t in self._tools:
+            if t["function"]["name"] not in registered_names:
+                all_tools.append(t)
+
         if self.memory_manager:
             all_tools.extend(self.memory_manager.get_all_tool_schemas())
+
 
         # 容错：确保系统提示词已被初始化构建
         if self._system_prompt_snapshot is None:
@@ -200,39 +216,98 @@ class Agent:
                 model=self.config.model.primary,
                 messages=api_messages,
                 tools=all_tools if all_tools else openai.NOT_GIVEN,
+                stream=True,
+                stream_options={"include_usage": True},
             )
 
-            choice = response.choices[0]
-            msg = choice.message
+            tool_call_slots: list[dict[str, Any]] = []
+            text_chunks: list[str] = []
 
-            # 计算和更新累积使用的 Token 计数（供 ContextCompressor 进行阀值压缩参考）
-            if response.usage:
-                self.compressor.update_usage(
-                    {
-                        "prompt_tokens": response.usage.prompt_tokens,
-                        "completion_tokens": response.usage.completion_tokens,
-                        "total_tokens": response.usage.total_tokens,
-                    }
-                )
+            for chunk in response:
+                # 计算和更新累积使用的 Token 计数（供 ContextCompressor 进行阀值压缩参考）
+                if hasattr(chunk, "usage") and chunk.usage:
+                    self.compressor.update_usage(
+                        {
+                            "prompt_tokens": chunk.usage.prompt_tokens,
+                            "completion_tokens": chunk.usage.completion_tokens,
+                            "total_tokens": chunk.usage.total_tokens,
+                        }
+                    )
+
+                if not chunk.choices:
+                    continue
+
+                choice = chunk.choices[0]
+                delta = choice.delta
+
+                if delta.tool_calls:
+                    for tc_delta in delta.tool_calls:
+                        idx = tc_delta.index
+                        while len(tool_call_slots) <= idx:
+                            tool_call_slots.append(
+                                {
+                                    "id": None,
+                                    "type": "function",
+                                    "function": {"name": "", "arguments": ""},
+                                }
+                            )
+                        slot = tool_call_slots[idx]
+                        if tc_delta.id:
+                            slot["id"] = tc_delta.id
+                        if tc_delta.function:
+                            if tc_delta.function.name:
+                                slot["function"]["name"] += tc_delta.function.name
+                            if tc_delta.function.arguments:
+                                slot["function"]["arguments"] += tc_delta.function.arguments
+
+                elif delta.content:
+                    text_chunks.append(delta.content)
+                    if on_chunk:
+                        # 只有在确定不发起 tool_call（或者当前确实是纯文本响应）时，实时将 chunk 推回给回调
+                        # 注意：由于 OpenAI 会在最开始的 chunk 透露是 content 还是 tool_call，一旦确认是 content，
+                        # 之后的 chunks 绝不会再变为 tool_call，所以这里可以安全地直接流式推送给 UI。
+                        on_chunk(delta.content)
 
             # 情况 A: LLM 决定输出最终的文本回答，退出工具调用循环
-            if not msg.tool_calls:
-                content = msg.content or ""
+            if not tool_call_slots:
+                content = "".join(text_chunks)
                 self.messages.append({"role": "assistant", "content": content})
                 return content
 
             # 情况 B: LLM 决定发起工具调用。
             # 首先必须把大模型含有 tool_calls 请求的 Assistant 消息原封不动追加到上下文中（OpenAI 协议强制要求）
-            self.messages.append(msg.model_dump())
+            # 重构大模型原始的 assistant tool_calls 请求格式
+            assistant_msg = {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": slot["id"],
+                        "type": "function",
+                        "function": {
+                            "name": slot["function"]["name"],
+                            "arguments": slot["function"]["arguments"],
+                        },
+                    }
+                    for slot in tool_call_slots
+                ],
+            }
+            self.messages.append(assistant_msg)
 
             # 遍历并依次执行大模型请求的每一个工具调用（支持在一轮中并行执行多个）
-            for tool_call in msg.tool_calls:
-                fn_name = tool_call.function.name
-                fn_args = json.loads(tool_call.function.arguments)
+            for slot in tool_call_slots:
+                fn_name = slot["function"]["name"]
+                # 兼容偶尔 arguments 为空字符串的情况，若为空则默认传空字典的 JSON 字符串
+                fn_args_str = slot["function"]["arguments"] or "{}"
+                try:
+                    fn_args = json.loads(fn_args_str)
+                except json.JSONDecodeError as exc:
+                    logger.exception("解析工具参数 JSON 失败: %s", fn_args_str)
+                    fn_args = {}
 
                 logger.debug("执行工具回调: %s(%s)", fn_name, fn_args)
 
-                # 工具分发路由器：优先判断是否是记忆组件提供的工具，否则在常规 Agent 注册的工具字典里查找
+                # 工具分发路由器：优先判断是否是记忆组件提供的工具，接着检查 Mock 工具，最终统一通过 registry 派发
                 if self.memory_manager and self.memory_manager.is_memory_tool(fn_name):
                     result = self.memory_manager.handle_tool_call(fn_name, fn_args)
                 elif fn_name in self._tool_handlers:
@@ -242,16 +317,61 @@ class Agent:
                         logger.exception("工具 '%s' 执行中抛出异常", fn_name)
                         result = f"Error executing {fn_name}: {exc}"
                 else:
-                    result = f"Unknown tool: {fn_name}"
+                    # 通过通用注册表 (registry) 派发执行，并将 agent=self 作为参数注入
+                    result = registry.dispatch(fn_name, fn_args, agent=self)
 
                 # 执行工具后，必须将结果追加，用 tool_call_id 绑定对应的请求
                 self.messages.append(
                     {
                         "role": "tool",
-                        "tool_call_id": tool_call.id,
+                        "tool_call_id": slot["id"],
                         "content": str(result) if result is not None else "",
                     }
                 )
+
+    def generate_summary(self) -> str | None:
+        """使用辅助模型根据当前对话历史生成一个简短的会话摘要（通常在 15-20 字以内）。"""
+        # 如果没有有效的对话内容，不生成摘要
+        user_msgs = [m for m in self.messages if m.get("role") == "user"]
+        if not user_msgs:
+            return None
+
+        # 构建对话上下文摘要的文本
+        lines = []
+        for msg in self.messages:
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "") or ""
+            # 忽略压缩总结等元数据
+            if msg.get("_metadata", {}).get("is_compression_summary"):
+                continue
+            if role in ("user", "assistant") and content:
+                lines.append(f"[{role}]: {content[:300]}")
+
+        conversation_text = "\n".join(lines)
+
+        try:
+            response = self.client.chat.completions.create(
+                model=self.config.model.auxiliary,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a helper that summarizes the conversation into a short, concise session title. "
+                            "Write a single sentence, no more than 6 words or 15 Chinese characters. "
+                            "Do not include quotes or prefixes like 'Session:' or 'Title:' or markdown formatting."
+                        ),
+                    },
+                    {"role": "user", "content": conversation_text},
+                ],
+                max_tokens=30,
+                temperature=0.3,
+            )
+            summary = response.choices[0].message.content
+            if summary:
+                return summary.strip().strip('"').strip("'").replace("\n", " ")
+        except Exception as exc:
+            logger.exception("生成会话标题摘要失败")
+        return None
 
     # -- 会话结束与释放生命周期 -------------------------------------------------
 

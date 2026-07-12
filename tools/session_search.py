@@ -127,68 +127,63 @@ class SessionSearch:
             for r in rows
         ]
 
-    # -- 工具定义 Schemas 组装 --------------------------------------------------
 
-    def get_tool_schemas(self) -> list[dict[str, Any]]:
-        """定义供 Agent 使用的 `session_search` 工具 API 接口。"""
-        return [
-            {
-                "type": "function",
-                "function": {
-                    "name": "session_search",
-                    "description": (
-                        "Search past conversations. Modes: "
-                        "'discover' (FTS5 query), 'scroll' (view messages in a session), "
-                        "'browse' (recent sessions). Zero LLM cost."
-                    ),
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "mode": {
-                                "type": "string",
-                                "enum": ["discover", "scroll", "browse"],
-                            },
-                            "query": {
-                                "type": "string",
-                                "description": "Search query (for discover mode)",
-                            },
-                            "session_id": {
-                                "type": "string",
-                                "description": "Session ID (for scroll mode)",
-                            },
-                            "limit": {
-                                "type": "integer",
-                                "description": "Max results (default: 10)",
-                            },
-                        },
-                        "required": ["mode"],
-                    },
-                },
-            }
-        ]
+# -- 自动注册至通用工具中心 ----------------------------------------------------
+from tools.registry import registry
 
-    def handle_tool_call(self, tool_name: str, arguments: dict[str, Any]) -> str:
-        """派发和响应 `session_search` 的三种不同模式，并打包为 JSON String 返回给 Agent。"""
-        if tool_name != "session_search":
-            return f"Unknown tool: {tool_name}"
+SESSION_SEARCH_SCHEMA = {
+    "description": (
+        "Search past conversations. Modes: "
+        "'discover' (FTS5 query), 'scroll' (view messages in a session), "
+        "'browse' (recent sessions). Zero LLM cost."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "mode": {
+                "type": "string",
+                "enum": ["discover", "scroll", "browse"],
+            },
+            "query": {
+                "type": "string",
+                "description": "Search query (for discover mode)",
+            },
+            "session_id": {
+                "type": "string",
+                "description": "Session ID (for scroll mode)",
+            },
+            "limit": {
+                "type": "integer",
+                "description": "Max results (default: 10)",
+            },
+        },
+        "required": ["mode"],
+    },
+}
 
-        mode = arguments.get("mode", "browse")
-        limit = arguments.get("limit", 10)
+def _handle_session_search(mode, query=None, session_id=None, limit=10, **kwargs):
+    agent = kwargs["agent"]
+    import json
+    match mode:
+        case "discover":
+            if not query:
+                return "Error: 'query' required for discover mode"
+            results = agent.session_search.discover(query, limit)
+        case "scroll":
+            if not session_id:
+                return "Error: 'session_id' required for scroll mode"
+            results = agent.session_search.scroll(session_id, limit=limit)
+        case "browse":
+            results = agent.session_search.browse(limit)
+        case _:
+            return f"Unknown mode: {mode}"
+    return json.dumps(results, ensure_ascii=False, indent=2)
 
-        match mode:
-            case "discover":
-                query = arguments.get("query", "")
-                if not query:
-                    return "Error: 'query' required for discover mode"
-                results = self.discover(query, limit)
-            case "scroll":
-                sid = arguments.get("session_id", "")
-                if not sid:
-                    return "Error: 'session_id' required for scroll mode"
-                results = self.scroll(sid, limit=limit)
-            case "browse":
-                results = self.browse(limit)
-            case _:
-                return f"Unknown mode: {mode}"
+registry.register(
+    name="session_search",
+    toolset="session_search",
+    schema=SESSION_SEARCH_SCHEMA,
+    handler=_handle_session_search,
+)
 
-        return json.dumps(results, ensure_ascii=False, indent=2)
+

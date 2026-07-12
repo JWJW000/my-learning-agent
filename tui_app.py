@@ -187,6 +187,15 @@ class MyAgentTUI(App):
         scrollbar-background: #1e1e2e;
     }
 
+    #streaming_response {
+        background: #1e1e2e;
+        color: #a6e3a1;
+        padding: 0 2;
+        margin-bottom: 1;
+        height: auto;
+        min-height: 0;
+    }
+
     #status_bar {
         height: 1;
         background: #181825;
@@ -222,6 +231,9 @@ class MyAgentTUI(App):
         self.session_id = str(uuid.uuid4())
         self.store.create_session(self.session_id, model=self.config.model.primary)
 
+        # 实时流式响应的消息累积缓冲区
+        self._stream_buffer = ""
+
         # 初始化记忆
         self.memory_store = MemoryStore(
             data_dir=self.config.memory.data_dir,
@@ -251,40 +263,40 @@ class MyAgentTUI(App):
         self.agent.skill_manager = self.skills_manager
         self.agent.session_id = self.session_id
 
-        # 绑定工具集到 Agent 中，并进行包装以便捕获状态
-        self._register_tui_tools()
+        # 初始化联网搜索与跨会话搜索组件
+        from tools.web_search import WebSearch
+        self.web_search = WebSearch(openai_client=self.agent.client)
+        self.agent.web_search = self.web_search
+        self.agent.session_search = self.session_search
+
+        # 包装和劫持工具以支持 TUI 状态展示
+        self._wrap_tui_tools()
 
         # 初始化 System Prompt 快照
         self.agent.build_system_prompt()
 
-    def _register_tui_tools(self) -> None:
-        """注册并用包装函数代理 Tool 调用以触发状态显示"""
-        # 1. 注册技能管理工具
-        for schema in self.skills_manager.get_tool_schemas():
-            func_name = schema["function"]["name"]
-            self.agent._tools.append(schema)
-            # 使用闭包包裹，以实现对 UI 状态的实时更新
-            self.agent._tool_handlers[func_name] = self._make_tool_proxy(
-                func_name, self.skills_manager.handle_tool_call
-            )
+    def _wrap_tui_tools(self) -> None:
+        """用包装函数代理 Tool 调用以触发状态显示"""
+        # 我们直接拦截和重写通用注册表中的工具 handler
+        from tools.registry import registry
 
-        # 2. 注册会话搜索工具
-        for schema in self.session_search.get_tool_schemas():
-            func_name = schema["function"]["name"]
-            self.agent._tools.append(schema)
-            self.agent._tool_handlers[func_name] = self._make_tool_proxy(
-                func_name, self.session_search.handle_tool_call
-            )
+        for tool_name in ["skills_list", "skill_view", "skill_create", "skill_delete", "session_search", "web_search"]:
+            entry = registry.get_entry(tool_name)
+            if entry:
+                original_handler = entry.handler
+                # 使用闭包包裹原 handler，从而能够在执行时修改主线程状态
+                entry.handler = self._make_tool_proxy(tool_name, original_handler)
 
     def _make_tool_proxy(self, name: str, original_handler: callable):
         """生成 Tool Proxy 闭包，使得在 Worker 线程调用工具时，能安全更新主线程的 UI 状态"""
-        def proxy(**kwargs):
+        def proxy(*args, **kwargs):
             # 将 UI 状态标记更新任务派发到主线程执行
             self.call_from_thread(self.set_status, f"🔧 正在执行工具: {name}...")
             try:
-                res = original_handler(name, kwargs)
+                # 兼容 lambda 与 kwargs 传参
+                res = original_handler(*args, **kwargs)
             except Exception as e:
-                res = original_handler(name, **kwargs) if hasattr(original_handler, "__code__") else str(e)
+                res = f"Error executing {name}: {e}"
             self.call_from_thread(self.set_status, "🤖 Agent 正在思考...")
             return res
         return proxy
@@ -315,6 +327,7 @@ class MyAgentTUI(App):
             # 右侧对话区
             Vertical(
                 RichLog(id="chat_log", highlight=True, markup=True, wrap=True),
+                Static("", id="streaming_response"),
                 Static(" 状态: Idle", id="status_bar"),
                 Vertical(
                     Input(placeholder="输入您的问题，Esc 切换焦点，Ctrl+Q 退出...", id="user_input"),
@@ -327,6 +340,8 @@ class MyAgentTUI(App):
 
     def on_mount(self) -> None:
         """界面挂载后的初始化工作"""
+        # 默认隐藏流式控件
+        self.query_one("#streaming_response", Static).styles.display = "none"
         self.refresh_sidebar_data()
         self.query_one("#user_input", Input).focus()
 
@@ -399,6 +414,12 @@ class MyAgentTUI(App):
         """安全退出 TUI 客户端并执行 Agent 销毁钩子"""
         self.set_status("正在保存会话并清理资源...")
         try:
+            summary = self.agent.generate_summary()
+            if summary:
+                self.store.update_session_summary(self.session_id, summary)
+        except Exception as e:
+            logger.error("退出生成摘要失败: %s", e)
+        try:
             self.agent.end_session()
             self.store.close()
         except Exception as e:
@@ -446,7 +467,8 @@ class MyAgentTUI(App):
                 chat_log.write(Text.from_markup("[yellow]⚠️ 用法: /learn <技能主题名称或数据源>[/yellow]"))
                 return
 
-        # 唤醒后台 Worker 进行大模型请求，避免死锁 UI
+        # 重置流式缓冲区并展示正在思考状态
+        self._stream_buffer = ""
         self.set_status("🤖 Agent 正在思考...")
         self.run_turn_worker(final_input, user_text)
 
@@ -462,17 +484,30 @@ class MyAgentTUI(App):
                     info = f"自动维护技能库: {len(summary['staled'])}个过期, {len(summary['archived'])}个归档"
                     self.call_from_thread(self._write_sys_msg, info)
 
-            # 2. 执行核心对话
+            # 2. 执行核心对话，并定义 on_chunk 传入 Agent
             self.call_from_thread(self.set_status, "🤖 Agent 正在思考...")
-            response = self.agent.run_turn(final_input)
+
+            def on_chunk(chunk: str) -> None:
+                self.call_from_thread(self._append_stream_chunk, chunk)
+
+            response = self.agent.run_turn(final_input, on_chunk=on_chunk)
 
             # 3. 数据入库归档
             self.store.save_message(self.session_id, "user", raw_input)
             self.store.save_message(self.session_id, "assistant", response)
 
-            # 4. 回写回复文本到 UI 并刷新侧边栏
-            self.call_from_thread(self._render_agent_response, response)
-            self.call_from_thread(self.refresh_sidebar_data)
+            # 4. 自动生成摘要并保存（在后台线程执行，不会造成 UI 卡顿）
+            try:
+                user_messages_count = sum(1 for m in self.agent.messages if m.get("role") == "user")
+                if user_messages_count == 1 or user_messages_count % 5 == 0:
+                    summary = self.agent.generate_summary()
+                    if summary:
+                        self.store.update_session_summary(self.session_id, summary)
+            except Exception as e:
+                logger.error("后台生成会话标题失败: %s", e)
+
+            # 5. 回写回复文本到 UI 并刷新侧边栏
+            self.call_from_thread(self._finish_stream_response, response)
         except Exception as exc:
             logger.exception("Agent 对话执行异常")
             self.call_from_thread(self._write_error_msg, f"对话执行出错: {exc}")
@@ -480,6 +515,27 @@ class MyAgentTUI(App):
             self.call_from_thread(self.set_status, "Idle")
 
     # -- 主线程 UI 渲染方法 ---------------------------------------------------
+
+    def _append_stream_chunk(self, chunk: str) -> None:
+        """主线程更新流式显示区域"""
+        widget = self.query_one("#streaming_response", Static)
+        if widget.styles.display == "none":
+            widget.styles.display = "block"
+        self._stream_buffer += chunk
+        widget.update(f"[bold cyan]Agent:[/bold cyan]\n{self._stream_buffer}")
+        self.query_one("#chat_log", RichLog).scroll_end()
+
+    def _finish_stream_response(self, response: str) -> None:
+        """主线程完成流式响应的清理，并在日志里正式写入最终 Markdown 渲染内容"""
+        widget = self.query_one("#streaming_response", Static)
+        widget.styles.display = "none"
+        widget.update("")
+        self._stream_buffer = ""
+
+        # 写入最终精美渲染版本到 chat_log 消息记录
+        self._render_agent_response(response)
+        # 刷新侧边栏与列表数据
+        self.refresh_sidebar_data()
 
     def _write_sys_msg(self, msg: str) -> None:
         """在屏幕输出一条灰色系统消息"""

@@ -333,3 +333,92 @@ class MemoryStore(MemoryProvider):
             "</system>",
         ]
         return any(t in lower for t in threats)
+
+
+# -- 自动注册至通用工具中心 ----------------------------------------------------
+from tools.registry import registry
+
+MEMORY_SAVE_SCHEMA = {
+    "description": "Save important information to persistent agent memory. Use for facts, decisions, patterns you want to remember across sessions.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "content": {"type": "string", "description": "The information to remember"},
+        },
+        "required": ["content"],
+    },
+}
+
+USER_INFO_SAVE_SCHEMA = {
+    "description": "Record user preferences, habits, environment details, or knowledge for personalization.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "content": {"type": "string", "description": "User information to record"},
+        },
+        "required": ["content"],
+    },
+}
+
+MEMORY_READ_SCHEMA = {
+    "description": "Read current memory entries (live state, may differ from system prompt snapshot).",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "store": {
+                "type": "string",
+                "enum": ["agent", "user", "both"],
+                "description": "Which memory store to read",
+                "default": "both",
+            },
+        },
+    },
+}
+
+MEMORY_DELETE_SCHEMA = {
+    "description": "Delete a memory entry by its index number.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "store": {
+                "type": "string",
+                "enum": ["agent", "user"],
+                "description": "Which store to delete from",
+            },
+            "index": {
+                "type": "integer",
+                "description": "0-based index of the entry to delete",
+            },
+        },
+        "required": ["store", "index"],
+    },
+}
+
+registry.register(
+    name="memory_save",
+    toolset="memory",
+    schema=MEMORY_SAVE_SCHEMA,
+    handler=lambda content, **kwargs: kwargs["agent"].memory_manager.handle_tool_call("memory_save", {"content": content}),
+)
+
+registry.register(
+    name="user_info_save",
+    toolset="memory",
+    schema=USER_INFO_SAVE_SCHEMA,
+    handler=lambda content, **kwargs: kwargs["agent"].memory_manager.handle_tool_call("user_info_save", {"content": content}),
+)
+
+registry.register(
+    name="memory_read",
+    toolset="memory",
+    schema=MEMORY_READ_SCHEMA,
+    handler=lambda store="both", **kwargs: kwargs["agent"].memory_manager.handle_tool_call("memory_read", {"store": store}),
+)
+
+registry.register(
+    name="memory_delete",
+    toolset="memory",
+    schema=MEMORY_DELETE_SCHEMA,
+    handler=lambda store, index, **kwargs: kwargs["agent"].memory_manager.handle_tool_call("memory_delete", {"store": store, "index": index}),
+)
+
