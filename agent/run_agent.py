@@ -183,7 +183,7 @@ class Agent:
     def _call_llm_loop(self, on_chunk: Callable[[str], None] | None = None) -> str:
         """内部工具交互核心循环。
 
-        LLM 可能会返回一个或多个 `tool_calls`。系统执行这些函数，将结果以 `role="tool"`
+        LLM 可能会返回一个或多个 `tool_calls`。系统执行 these 函数，将结果以 `role="tool"`
         的角色格式化并追加入上下文历史中，然后再次请求 LLM。
         这一循环将持续运行，直到 LLM 不再返回 `tool_calls` 为止。
         """
@@ -196,9 +196,16 @@ class Agent:
         for t in self._tools:
             if t["function"]["name"] not in registered_names:
                 all_tools.append(t)
+                registered_names.add(t["function"]["name"])
 
+        # 合并记忆组件暴露出来的工具（去重，防重复定义）
         if self.memory_manager:
-            all_tools.extend(self.memory_manager.get_all_tool_schemas())
+            for schema in self.memory_manager.get_all_tool_schemas():
+                name = schema["function"]["name"]
+                if name not in registered_names:
+                    all_tools.append(schema)
+                    registered_names.add(name)
+
 
 
         # 容错：确保系统提示词已被初始化构建
