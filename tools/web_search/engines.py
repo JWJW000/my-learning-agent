@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import base64
 import html
 import html.parser
 import json
@@ -17,7 +18,8 @@ import os
 import urllib.parse
 import urllib.request
 from abc import ABC, abstractmethod
-from typing import Any
+
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +86,135 @@ class DDGHTMLParser(html.parser.HTMLParser):
             self.results.append(self.current_result)
 
 
+class BingHTMLParser(html.parser.HTMLParser):
+    """解析 Bing 公开 HTML 搜索结果，不依赖 API Key。"""
+
+    def __init__(self):
+        super().__init__()
+        self.results: list[dict[str, str]] = []
+        self.current_result: dict[str, str] | None = None
+        self.in_heading = False
+        self.in_title = False
+        self.in_caption = False
+        self.in_snippet = False
+        self.temp_text: list[str] = []
+
+    def _finish_result(self) -> None:
+        if self.current_result:
+            self.results.append(self.current_result)
+        self.current_result = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attrs_dict = dict(attrs)
+        classes = set((attrs_dict.get("class", "") or "").split())
+
+        if tag == "li" and "b_algo" in classes:
+            self._finish_result()
+            self.current_result = {"title": "", "url": "", "snippet": ""}
+        elif not self.current_result:
+            return
+        elif tag == "h2":
+            self.in_heading = True
+        elif tag == "a" and self.in_heading:
+            self.in_title = True
+            self.current_result["url"] = attrs_dict.get("href", "") or ""
+            self.temp_text = []
+        elif tag == "div" and "b_caption" in classes:
+            self.in_caption = True
+        elif tag == "p" and self.in_caption:
+            self.in_snippet = True
+            self.temp_text = []
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "a" and self.in_title:
+            self.in_title = False
+            if self.current_result:
+                self.current_result["title"] = html.unescape(
+                    "".join(self.temp_text)
+                ).strip()
+            self.temp_text = []
+        elif tag == "h2":
+            self.in_heading = False
+        elif tag == "p" and self.in_snippet:
+            self.in_snippet = False
+            if self.current_result:
+                self.current_result["snippet"] = html.unescape(
+                    "".join(self.temp_text)
+                ).strip()
+            self.temp_text = []
+        elif tag == "li" and self.current_result:
+            self._finish_result()
+            self.in_caption = False
+
+    def handle_data(self, data: str) -> None:
+        if self.in_title or self.in_snippet:
+            self.temp_text.append(data)
+
+    def close(self) -> None:
+        super().close()
+        self._finish_result()
+
+
+def _unwrap_bing_url(url: str) -> str:
+    """将 Bing ``/ck/a`` 跳转链接还原成实际结果地址。"""
+    parsed = urllib.parse.urlparse(url)
+    if not parsed.netloc.endswith("bing.com") or parsed.path != "/ck/a":
+        return url
+
+    encoded_values = urllib.parse.parse_qs(parsed.query).get("u", [])
+    if not encoded_values or not encoded_values[0].startswith("a1"):
+        return url
+
+    encoded = encoded_values[0][2:]
+    encoded += "=" * (-len(encoded) % 4)
+    try:
+        decoded = base64.urlsafe_b64decode(encoded).decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        return url
+    return decoded if decoded.startswith(("http://", "https://")) else url
+
+
+class BingHTMLEngine(SearchEngine):
+    """基于 Bing 搜索结果页的免密钥降级后端。"""
+
+    def search(self, query: str, limit: int = 10) -> list[dict[str, str]]:
+        params = urllib.parse.urlencode({"q": query, "count": limit})
+        url = f"https://www.bing.com/search?{params}"
+        headers = {
+            # Bing 会对部分完整浏览器 UA 返回依赖 JavaScript 的页面。简短 UA
+            # 会稳定返回服务端渲染的 b_algo 结果列表，便于无头客户端解析。
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "text/html,application/xhtml+xml",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+
+        try:
+            response = httpx.get(
+                url,
+                headers=headers,
+                timeout=10.0,
+                follow_redirects=True,
+            )
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            logger.error("Bing HTML search request failed: %s", exc)
+            return []
+
+        parser = BingHTMLParser()
+        parser.feed(response.text)
+        parser.close()
+
+        cleaned_results = []
+        for result in parser.results:
+            if not result["title"] or not result["url"]:
+                continue
+            result["title"] = " ".join(result["title"].split())
+            result["snippet"] = " ".join(result["snippet"].split())
+            result["url"] = _unwrap_bing_url(result["url"])
+            cleaned_results.append(result)
+        return cleaned_results[:limit]
+
+
 class DuckDuckGoEngine(SearchEngine):
     """基于 DuckDuckGo HTML 页面的免 API 密钥搜索引擎。"""
 
@@ -91,7 +222,10 @@ class DuckDuckGoEngine(SearchEngine):
         url = "https://html.duckduckgo.com/html/"
         data = urllib.parse.urlencode({"q": query}).encode("utf-8")
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0",
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) "
+                "Gecko/20100101 Firefox/115.0"
+            ),
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.5",
             "Content-Type": "application/x-www-form-urlencoded",
@@ -104,8 +238,11 @@ class DuckDuckGoEngine(SearchEngine):
             with urllib.request.urlopen(req, timeout=10) as response:
                 html_content = response.read().decode("utf-8")
         except Exception as e:
-            logger.error("DuckDuckGo HTML search request failed: %s", e)
-            return []
+            logger.warning(
+                "DuckDuckGo HTML search request failed: %s. Falling back to Bing HTML.",
+                e,
+            )
+            return BingHTMLEngine().search(query, limit)
 
         parser = DDGHTMLParser()
         parser.feed(html_content)
@@ -124,7 +261,13 @@ class DuckDuckGoEngine(SearchEngine):
 
             cleaned_results.append(r)
 
-        return cleaned_results[:limit]
+        if cleaned_results:
+            return cleaned_results[:limit]
+
+        logger.warning(
+            "DuckDuckGo returned no parseable results. Falling back to Bing HTML."
+        )
+        return BingHTMLEngine().search(query, limit)
 
 
 class BraveEngine(SearchEngine):
@@ -135,8 +278,8 @@ class BraveEngine(SearchEngine):
 
     def search(self, query: str, limit: int = 10) -> list[dict[str, str]]:
         if not self.api_key:
-            logger.warning("Brave Search API Key missing. Falling back to DuckDuckGo.")
-            return DuckDuckGoEngine().search(query, limit)
+            logger.warning("Brave Search API Key missing. Falling back to Bing HTML.")
+            return BingHTMLEngine().search(query, limit)
 
         params = urllib.parse.urlencode({"q": query, "count": limit})
         url = f"https://api.search.brave.com/res/v1/web/search?{params}"
@@ -161,8 +304,8 @@ class BraveEngine(SearchEngine):
                 })
             return results[:limit]
         except Exception as e:
-            logger.error("Brave search failed: %s. Falling back to DuckDuckGo.", e)
-            return DuckDuckGoEngine().search(query, limit)
+            logger.error("Brave search failed: %s. Falling back to Bing HTML.", e)
+            return BingHTMLEngine().search(query, limit)
 
 
 class BingEngine(SearchEngine):
@@ -173,8 +316,8 @@ class BingEngine(SearchEngine):
 
     def search(self, query: str, limit: int = 10) -> list[dict[str, str]]:
         if not self.api_key:
-            logger.warning("Bing Search API Key missing. Falling back to DuckDuckGo.")
-            return DuckDuckGoEngine().search(query, limit)
+            logger.warning("Bing Search API Key missing. Falling back to Bing HTML.")
+            return BingHTMLEngine().search(query, limit)
 
         params = urllib.parse.urlencode({"q": query, "count": limit})
         url = f"https://api.bingwebsearch.microsoft.com/v7.0/search?{params}"
@@ -197,8 +340,8 @@ class BingEngine(SearchEngine):
                 })
             return results[:limit]
         except Exception as e:
-            logger.error("Bing search failed: %s. Falling back to DuckDuckGo.", e)
-            return DuckDuckGoEngine().search(query, limit)
+            logger.error("Bing search failed: %s. Falling back to Bing HTML.", e)
+            return BingHTMLEngine().search(query, limit)
 
 
 class TavilyEngine(SearchEngine):
@@ -209,8 +352,8 @@ class TavilyEngine(SearchEngine):
 
     def search(self, query: str, limit: int = 10) -> list[dict[str, str]]:
         if not self.api_key:
-            logger.warning("Tavily Search API Key missing. Falling back to DuckDuckGo.")
-            return DuckDuckGoEngine().search(query, limit)
+            logger.warning("Tavily Search API Key missing. Falling back to Bing HTML.")
+            return BingHTMLEngine().search(query, limit)
 
         url = "https://api.tavily.com/search"
         payload = json.dumps({
@@ -246,8 +389,8 @@ class TavilyEngine(SearchEngine):
                 })
             return results[:limit]
         except Exception as e:
-            logger.error("Tavily search failed: %s. Falling back to DuckDuckGo.", e)
-            return DuckDuckGoEngine().search(query, limit)
+            logger.error("Tavily search failed: %s. Falling back to Bing HTML.", e)
+            return BingHTMLEngine().search(query, limit)
 
 
 def get_default_engine() -> SearchEngine:
@@ -259,4 +402,4 @@ def get_default_engine() -> SearchEngine:
     elif os.environ.get("BING_API_KEY"):
         return BingEngine()
     else:
-        return DuckDuckGoEngine()
+        return BingHTMLEngine()

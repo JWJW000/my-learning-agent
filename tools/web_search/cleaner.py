@@ -14,6 +14,23 @@ import re
 class HTMLCleanerParser(html.parser.HTMLParser):
     """HTML 剥离与正文内容提取解析器。"""
 
+    VOID_TAGS = {
+        "area",
+        "base",
+        "br",
+        "col",
+        "embed",
+        "hr",
+        "img",
+        "input",
+        "link",
+        "meta",
+        "param",
+        "source",
+        "track",
+        "wbr",
+    }
+
     def __init__(self):
         super().__init__()
         self.text_parts: list[str] = []
@@ -25,15 +42,24 @@ class HTMLCleanerParser(html.parser.HTMLParser):
         self.current_tag_stack: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        self.current_tag_stack.append(tag.lower())
+        tag = tag.lower()
+        # meta/link/br 等 void element 没有结束标签，不能压入栈；否则一个
+        # <meta> 会让后续整个 <body> 永久处于被忽略的 <head> 上下文中。
+        if tag not in self.VOID_TAGS:
+            self.current_tag_stack.append(tag)
         # 在遇到常见块级元素或换行元素时，写入换行符以保持格式清晰
-        if tag.lower() in {"p", "br", "div", "li", "h1", "h2", "h3", "h4", "h5", "h6", "tr"}:
+        if tag in {"p", "br", "div", "li", "h1", "h2", "h3", "h4", "h5", "h6", "tr"}:
             self.text_parts.append("\n")
 
     def handle_endtag(self, tag: str) -> None:
-        if self.current_tag_stack:
-            self.current_tag_stack.pop()
-        if tag.lower() in {"p", "div", "li", "h1", "h2", "h3", "h4", "h5", "h6", "tr"}:
+        tag = tag.lower()
+        # 容忍不规范 HTML：找到相同的最近祖先并连同未闭合的子标签一起
+        # 出栈，而不是盲目 pop 导致标签上下文错位。
+        if tag in self.current_tag_stack:
+            reverse_index = self.current_tag_stack[::-1].index(tag)
+            start = len(self.current_tag_stack) - reverse_index - 1
+            del self.current_tag_stack[start:]
+        if tag in {"p", "div", "li", "h1", "h2", "h3", "h4", "h5", "h6", "tr"}:
             self.text_parts.append("\n")
 
     def handle_data(self, data: str) -> None:
@@ -105,7 +131,11 @@ class HTMLCleaner:
                         if current_chunk:
                             chunks.append("\n".join(current_chunk))
                         # 新建分块，保留少量重叠
-                        overlap_text = current_chunk[-1][-overlap:] if current_chunk and overlap > 0 else ""
+                        overlap_text = (
+                            current_chunk[-1][-overlap:]
+                            if current_chunk and overlap > 0
+                            else ""
+                        )
                         current_chunk = [overlap_text, s] if overlap_text else [s]
                         current_length = len(current_chunk[0]) + s_len if overlap_text else s_len
                     else:
@@ -116,7 +146,11 @@ class HTMLCleaner:
                     if current_chunk:
                         chunks.append("\n\n".join(current_chunk))
                     # 重叠处理
-                    overlap_text = current_chunk[-1][-overlap:] if current_chunk and overlap > 0 else ""
+                    overlap_text = (
+                        current_chunk[-1][-overlap:]
+                        if current_chunk and overlap > 0
+                        else ""
+                    )
                     current_chunk = [overlap_text, p] if overlap_text else [p]
                     current_length = len(current_chunk[0]) + p_len if overlap_text else p_len
                 else:

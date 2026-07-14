@@ -1,43 +1,48 @@
-"""内置的持久化文件背书记忆工具 (MemoryStore)。
+"""Hermes-style bounded, curated, file-backed memory.
 
-管理两个本地 Markdown 记忆数据库：
-  - MEMORY.md: 记录 Agent 自身的经验备忘、工具使用心得、项目规则等。
-  - USER.md: 记录 User 的个人画像、特定偏好、本地硬件架构与使用习惯。
+Two stores are kept as ``§``-delimited Markdown files:
 
-设计与核心架构模式：
-  1. 冻结快照模式 (Frozen Snapshot)：
-     在会话初次启动执行 initialize 时，读取本地 md 文件并解析成内存条目列表，
-     然后拼接并冻结生成 `_system_prompt_snapshot` 注入系统提示词。
-     后续在会话期间模型如果通过工具（如 `memory_save`）写入新记忆，这些更改会立即持久化落盘，
-     并同步更新内存中的 entries 列表，但绝不更改已在进行中的 System Prompt。
-     这保证了 prefix cache 的稳定并防止上下文变动引起的推理幻觉。
-  2. 漂移检测 (Drift Detection)：
-     在回写文件前，会重新计算磁盘上现有文件的 MD5 哈希。
-     如果与初次加载时的哈希不匹配，说明有并发会话修改了该文件或人工对其进行了直接修补。
-     此时系统会拒绝写入以防止覆盖外部修改，保持数据完整性。
-  3. 威胁扫描 (Threat Scanning)：
-     对写入记忆的内容进行初级的 Prompt Injection（提示词注入攻击）正则过滤，拒绝记录破坏系统设定的指示。
-  4. 容量限制与驱逐 (Eviction)：
-     采用“字符数限制”以保持模型中立度（Token 数量受模型分词器差异影响）。
-     超出限制时按交互时间线“最老先出”机制强制淘汰旧条目。
+* ``MEMORY.md`` contains durable agent notes about projects and environments.
+* ``USER.md`` contains durable user preferences and profile facts.
+
+The files are loaded into a frozen system-prompt snapshot at session start. Tool
+writes update live state and disk immediately, but never mutate that snapshot.
 """
 
 from __future__ import annotations
 
+import json
 import logging
+import os
+import tempfile
+import threading
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from agent.memory_provider import MemoryProvider
+from tools.registry import registry
 
 logger = logging.getLogger(__name__)
 
-# 条目之间的特殊物理分隔符，可支持多行条目解析
+try:  # pragma: no cover - platform-specific branches
+    import fcntl
+except ImportError:  # Windows
+    fcntl = None
+
+try:  # pragma: no cover - platform-specific branches
+    import msvcrt
+except ImportError:  # Unix
+    msvcrt = None
+
 ENTRY_DELIMITER = "\n§\n"
+_SEPARATOR = "═" * 46
+_INVISIBLE_UNICODE = {"\u200b", "\u200c", "\u200d", "\u2060", "\ufeff"}
+_PROCESS_LOCK = threading.RLock()
 
 
 class MemoryStore(MemoryProvider):
-    """文件背书的记忆 Provider，实现冻结快照和冲突检测。"""
+    """Bounded curated memory with frozen prompt and live file state."""
 
     def __init__(
         self,
@@ -47,37 +52,29 @@ class MemoryStore(MemoryProvider):
     ):
         self._data_dir = Path(data_dir)
         self._data_dir.mkdir(parents=True, exist_ok=True)
-
         self._memory_file = self._data_dir / "MEMORY.md"
         self._user_file = self._data_dir / "USER.md"
-
         self._agent_char_limit = agent_char_limit
         self._user_char_limit = user_char_limit
-
-        # 内存中维护的实时数据条目，写入操作会立即更新此字段并持久化到本地文件
         self._memory_entries: list[str] = []
         self._user_entries: list[str] = []
-
-        # 冻结的系统提示词快照，在会话生命周期内一经 initialize 组装后只读
-        self._system_prompt_snapshot: str = ""
-
-        # 漂移检测：记录加载时磁盘文件的 MD5，写入时进行校验
-        self._memory_file_hash: str = ""
-        self._user_file_hash: str = ""
-
-    # -- 实现 MemoryProvider 生命周期抽象接口 -------------------------------------
+        self._system_prompt_snapshot = ""
 
     @property
     def name(self) -> str:
         return "builtin"
 
     def is_available(self) -> bool:
-        return True  # 内置文件记忆无需任何外部鉴权，永远可用
+        return True
 
     def initialize(self, session_id: str, **kwargs) -> None:
-        """加载磁盘文件条目，并构建冻结的 System Prompt 记忆快照。"""
-        self._load_entries()
-        self._system_prompt_snapshot = self._format_for_prompt()
+        """Load live entries and capture the immutable per-session snapshot."""
+        self._memory_entries = self._deduplicate(self._read_file(self._memory_file))
+        self._user_entries = self._deduplicate(self._read_file(self._user_file))
+        self._system_prompt_snapshot = self._format_for_prompt(
+            self._sanitize_for_snapshot(self._memory_entries, "MEMORY.md"),
+            self._sanitize_for_snapshot(self._user_entries, "USER.md"),
+        )
         logger.info(
             "成功加载历史记忆: %d 条 Agent 备忘, %d 条用户信息",
             len(self._memory_entries),
@@ -85,340 +82,341 @@ class MemoryStore(MemoryProvider):
         )
 
     def system_prompt_block(self) -> str:
-        """获取初始构建的已冻结记忆 System Prompt 块。"""
         return self._system_prompt_snapshot
 
     def prefetch(self, query: str) -> None:
-        """文件数据库无需前置预提取，全部条目均在 system_prompt 中。"""
+        """Built-in Hermes memory is already present in the frozen prompt."""
 
     def sync_turn(self, user_msg: str, assistant_msg: str) -> None:
-        """文件数据库只支持由模型调用工具显式写回，不支持隐式启发式同步。"""
+        """Built-in memory is curated explicitly through the memory tool."""
 
     def get_tool_schemas(self) -> list[dict[str, Any]]:
-        """定义并返回供大模型调用的记忆读写与管理工具 Schema 列表。"""
-        return [
-            {
-                "type": "function",
-                "function": {
-                    "name": "memory_save",
-                    "description": (
-                        "Save important information to persistent agent memory. "
-                        "Use for facts, decisions, patterns you want to remember "
-                        "across sessions."
-                    ),
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "content": {
-                                "type": "string",
-                                "description": "The information to remember",
-                            },
-                        },
-                        "required": ["content"],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "user_info_save",
-                    "description": (
-                        "Record user preferences, habits, environment details, "
-                        "or knowledge for personalization."
-                    ),
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "content": {
-                                "type": "string",
-                                "description": "User information to record",
-                            },
-                        },
-                        "required": ["content"],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "memory_read",
-                    "description": "Read current memory entries (live state, may differ from system prompt snapshot).",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "store": {
-                                "type": "string",
-                                "enum": ["agent", "user", "both"],
-                                "description": "Which memory store to read",
-                                "default": "both",
-                            },
-                        },
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "memory_delete",
-                    "description": "Delete a memory entry by its index number.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "store": {
-                                "type": "string",
-                                "enum": ["agent", "user"],
-                                "description": "Which store to delete from",
-                            },
-                            "index": {
-                                "type": "integer",
-                                "description": "0-based index of the entry to delete",
-                            },
-                        },
-                        "required": ["store", "index"],
-                    },
-                },
-            },
-        ]
+        """Expose Hermes' single action-oriented memory tool."""
+        return [{"type": "function", "function": {"name": "memory", **MEMORY_SCHEMA}}]
 
     def handle_tool_call(self, tool_name: str, arguments: dict[str, Any]) -> str:
-        """路由和派发大模型的工具调用到具体的内部私有逻辑上。"""
-        match tool_name:
-            case "memory_save":
-                return self._save_memory(arguments["content"])
-            case "user_info_save":
-                return self._save_user_info(arguments["content"])
-            case "memory_read":
-                return self._read_memory(arguments.get("store", "both"))
-            case "memory_delete":
-                return self._delete_entry(arguments["store"], arguments["index"])
-            case _:
-                return f"Unknown memory tool: {tool_name}"
+        if tool_name == "memory":
+            result = self._handle_memory_action(arguments)
+        # Compatibility for callers using the repository's previous API. These
+        # aliases are intentionally not advertised to the model.
+        elif tool_name == "memory_save":
+            result = self.add("memory", arguments.get("content", ""))
+        elif tool_name == "user_info_save":
+            result = self.add("user", arguments.get("content", ""))
+        elif tool_name == "memory_read":
+            result = self._legacy_read(arguments.get("store", "both"))
+        elif tool_name == "memory_delete":
+            result = self._legacy_delete(arguments.get("store", "memory"), arguments.get("index"))
+        else:
+            result = {"success": False, "error": f"Unknown memory tool: {tool_name}"}
+        return json.dumps(result, ensure_ascii=False)
 
-    # -- 内部逻辑组件 ----------------------------------------------------------
+    def _handle_memory_action(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        action = str(arguments.get("action", "")).strip().lower()
+        target = self._normalize_target(arguments.get("target", "memory"))
+        if target is None:
+            return {"success": False, "error": "target must be 'memory' or 'user'."}
+        if action == "add":
+            return self.add(target, arguments.get("content", ""))
+        if action == "replace":
+            return self.replace(target, arguments.get("old_text", ""), arguments.get("content", ""))
+        if action == "remove":
+            return self.remove(target, arguments.get("old_text", ""))
+        return {"success": False, "error": "action must be add, replace, or remove."}
 
-    def _save_memory(self, content: str) -> str:
-        """将有价值的系统总结写入 MEMORY.md。"""
-        content = content.strip()
+    def add(self, target: str, content: str) -> dict[str, Any]:
+        content = str(content or "").strip()
+        error = self._validate_content(content)
+        if error:
+            return {"success": False, "error": error}
+        with self._locked_target(target):
+            entries = self._reload_target(target)
+            if content in entries:
+                return self._success(target, "Entry already exists; no duplicate added.")
+            proposed = [*entries, content]
+            overflow = self._overflow_response(target, proposed)
+            if overflow:
+                return overflow
+            self._set_entries(target, proposed)
+            self._write_file(self._path_for(target), proposed)
+        return self._success(target, "Entry added. This update is complete; do not repeat it.")
+
+    def replace(self, target: str, old_text: str, content: str) -> dict[str, Any]:
+        old_text = str(old_text or "").strip()
+        content = str(content or "").strip()
+        if not old_text:
+            return {"success": False, "error": "old_text cannot be empty."}
+        error = self._validate_content(content)
+        if error:
+            return {"success": False, "error": error}
+        with self._locked_target(target):
+            entries = self._reload_target(target)
+            match = self._unique_match(entries, old_text)
+            if isinstance(match, dict):
+                return match
+            proposed = entries.copy()
+            proposed[match] = content
+            proposed = self._deduplicate(proposed)
+            overflow = self._overflow_response(target, proposed)
+            if overflow:
+                return overflow
+            self._set_entries(target, proposed)
+            self._write_file(self._path_for(target), proposed)
+        return self._success(target, "Entry replaced. This update is complete; do not repeat it.")
+
+    def remove(self, target: str, old_text: str) -> dict[str, Any]:
+        old_text = str(old_text or "").strip()
+        if not old_text:
+            return {"success": False, "error": "old_text cannot be empty."}
+        with self._locked_target(target):
+            entries = self._reload_target(target)
+            match = self._unique_match(entries, old_text)
+            if isinstance(match, dict):
+                return match
+            proposed = entries.copy()
+            proposed.pop(match)
+            self._set_entries(target, proposed)
+            self._write_file(self._path_for(target), proposed)
+        return self._success(target, "Entry removed. This update is complete; do not repeat it.")
+
+    def _legacy_read(self, store: str) -> dict[str, Any]:
+        target = self._normalize_target(store)
+        if store == "both":
+            return {"success": True, "memory": self._memory_entries, "user": self._user_entries}
+        if target is None:
+            return {"success": False, "error": "store must be agent, memory, user, or both."}
+        return {"success": True, "target": target, "entries": self._entries_for(target)}
+
+    def _legacy_delete(self, store: str, index: Any) -> dict[str, Any]:
+        target = self._normalize_target(store)
+        if target is None or not isinstance(index, int):
+            return {"success": False, "error": "valid store and integer index are required."}
+        entries = self._entries_for(target)
+        if not 0 <= index < len(entries):
+            return {"success": False, "error": f"index {index} out of range."}
+        return self.remove(target, entries[index])
+
+    def _reload_target(self, target: str) -> list[str]:
+        entries = self._deduplicate(self._read_file(self._path_for(target)))
+        self._set_entries(target, entries)
+        return entries
+
+    def _unique_match(self, entries: list[str], old_text: str) -> int | dict[str, Any]:
+        matches = [(index, entry) for index, entry in enumerate(entries) if old_text in entry]
+        if not matches:
+            return {
+                "success": False,
+                "error": f"No entry matched '{old_text}'. Use text from current_entries.",
+                "current_entries": entries,
+            }
+        distinct = {entry for _, entry in matches}
+        if len(distinct) > 1:
+            return {
+                "success": False,
+                "error": f"Multiple entries matched '{old_text}'. Use a more specific substring.",
+                "matches": [entry[:100] for entry in distinct],
+            }
+        return matches[0][0]
+
+    def _overflow_response(self, target: str, entries: list[str]) -> dict[str, Any] | None:
+        total = self._char_count(entries)
+        limit = self._limit_for(target)
+        if total <= limit:
+            return None
+        return {
+            "success": False,
+            "error": (
+                f"Memory would use {total}/{limit} chars. Consolidate overlapping entries "
+                "with replace or remove stale entries, then retry."
+            ),
+            "current_entries": self._entries_for(target),
+            "usage": f"{self._char_count(self._entries_for(target))}/{limit}",
+        }
+
+    def _success(self, target: str, message: str) -> dict[str, Any]:
+        entries = self._entries_for(target)
+        current = self._char_count(entries)
+        limit = self._limit_for(target)
+        percent = min(100, int(current / limit * 100)) if limit else 0
+        return {
+            "success": True,
+            "done": True,
+            "target": target,
+            "message": message,
+            "usage": f"{percent}% — {current}/{limit} chars",
+            "entry_count": len(entries),
+        }
+
+    def _format_for_prompt(self, memory_entries: list[str], user_entries: list[str]) -> str:
+        blocks = []
+        if memory_entries:
+            blocks.append(self._render_block("memory", memory_entries))
+        if user_entries:
+            blocks.append(self._render_block("user", user_entries))
+        return "\n\n".join(blocks)
+
+    def _render_block(self, target: str, entries: list[str]) -> str:
+        current = self._char_count(entries)
+        limit = self._limit_for(target)
+        percent = min(100, int(current / limit * 100)) if limit else 0
+        label = (
+            "USER PROFILE (who the user is)"
+            if target == "user"
+            else "MEMORY (your personal notes)"
+        )
+        header = f"{label} [{percent}% — {current}/{limit} chars]"
+        return f"{_SEPARATOR}\n{header}\n{_SEPARATOR}\n{ENTRY_DELIMITER.join(entries)}"
+
+    def _sanitize_for_snapshot(self, entries: list[str], filename: str) -> list[str]:
+        sanitized = []
+        for entry in entries:
+            error = self._validate_content(entry)
+            if error:
+                logger.warning("阻止可疑记忆进入系统提示词 (%s): %s", filename, error)
+                sanitized.append(
+                    f"[BLOCKED: suspicious {filename} entry omitted from system prompt]"
+                )
+            else:
+                sanitized.append(entry)
+        return sanitized
+
+    @staticmethod
+    def _validate_content(content: str) -> str | None:
         if not content:
-            return "Error: empty content"
-
-        # 威胁扫描过滤
-        if self._looks_suspicious(content):
-            return "Error: content rejected by threat scanner"
-
-        self._memory_entries.append(content)
-        # 容量检查：若字符数超限，按最老条目驱逐
-        self._enforce_limit(self._memory_entries, self._agent_char_limit)
-        self._persist()
-        return f"Saved to agent memory ({len(self._memory_entries)} entries, {self._total_chars(self._memory_entries)}/{self._agent_char_limit} chars)"
-
-    def _save_user_info(self, content: str) -> str:
-        """将用户画像和操作偏好写入 USER.md。"""
-        content = content.strip()
-        if not content:
-            return "Error: empty content"
-
-        if self._looks_suspicious(content):
-            return "Error: content rejected by threat scanner"
-
-        self._user_entries.append(content)
-        self._enforce_limit(self._user_entries, self._user_char_limit)
-        self._persist()
-        return f"Saved to user info ({len(self._user_entries)} entries, {self._total_chars(self._user_entries)}/{self._user_char_limit} chars)"
-
-    def _read_memory(self, store: str = "both") -> str:
-        """供大模型读取当前内存中的实时记忆条目（返回实时最新的 entries 数据，带 0 起步的序号索引）。"""
-        parts = []
-        if store in ("agent", "both") and self._memory_entries:
-            lines = [f"  [{i}] {e}" for i, e in enumerate(self._memory_entries)]
-            parts.append("Agent Memory:\n" + "\n".join(lines))
-        if store in ("user", "both") and self._user_entries:
-            lines = [f"  [{i}] {e}" for i, e in enumerate(self._user_entries)]
-            parts.append("User Info:\n" + "\n".join(lines))
-        return "\n\n".join(parts) if parts else "(empty)"
-
-    def _delete_entry(self, store: str, index: int) -> str:
-        """根据序号索引物理删除特定的记忆条目。"""
-        entries = self._memory_entries if store == "agent" else self._user_entries
-        if 0 <= index < len(entries):
-            removed = entries.pop(index)
-            self._persist()
-            return f"Deleted from {store}: {removed[:60]}..."
-        return f"Error: index {index} out of range (0-{len(entries) - 1})"
-
-    # -- 本地磁盘 I/O 细节 ----------------------------------------------------
-
-    def _load_entries(self) -> None:
-        """从本地磁盘中加载 Markdown 并按特殊分割符切分成条目。"""
-        if self._memory_file.exists():
-            content = self._memory_file.read_text(encoding="utf-8")
-            self._memory_entries = [e.strip() for e in content.split("§") if e.strip()]
-            self._memory_file_hash = self._hash(content)
-
-        if self._user_file.exists():
-            content = self._user_file.read_text(encoding="utf-8")
-            self._user_entries = [e.strip() for e in content.split("§") if e.strip()]
-            self._user_file_hash = self._hash(content)
-
-    def _persist(self) -> None:
-        """将最新的条目回写入本地磁盘。本步骤不会改动已冻结的 system prompt snapshot。
-
-        写回前执行漂移碰撞检测：如果发现当前的磁盘文件哈希已经改变，则跳过本次写入并报警。
-        """
-        # MEMORY.md 碰撞校验
-        if self._memory_file.exists():
-            current_hash = self._hash(self._memory_file.read_text(encoding="utf-8"))
-            if current_hash != self._memory_file_hash and self._memory_file_hash:
-                logger.warning("MEMORY.md 发生外部修改冲突 — 跳过本次同步回写以免覆盖")
-                return
-
-        # 写入文件并更新当前缓存的哈希指纹
-        self._memory_file.write_text(
-            ENTRY_DELIMITER.join(self._memory_entries), encoding="utf-8"
-        )
-        self._memory_file_hash = self._hash(
-            self._memory_file.read_text(encoding="utf-8")
-        )
-
-        # USER.md 同步写入
-        self._user_file.write_text(
-            ENTRY_DELIMITER.join(self._user_entries), encoding="utf-8"
-        )
-        if self._user_file.exists():
-            self._user_file_hash = self._hash(
-                self._user_file.read_text(encoding="utf-8")
-            )
-
-    def _format_for_prompt(self) -> str:
-        """格式化内部的记忆数组为标准 Markdown 段落，供 System Prompt 拼合注入。"""
-        parts = []
-        if self._memory_entries:
-            entries_text = ENTRY_DELIMITER.join(self._memory_entries)
-            parts.append(f"## Agent Memory\n{entries_text}")
-        if self._user_entries:
-            entries_text = ENTRY_DELIMITER.join(self._user_entries)
-            parts.append(f"## User Knowledge\n{entries_text}")
-        return "\n\n".join(parts)
-
-    # -- 辅助工具函数 ----------------------------------------------------------
-
-    @staticmethod
-    def _total_chars(entries: list[str]) -> int:
-        """计算条目集的字符总和。"""
-        return sum(len(e) for e in entries)
-
-    @staticmethod
-    def _hash(content: str) -> str:
-        """生成文本的 MD5 哈希，作为冲突比对的指纹。"""
-        import hashlib
-        return hashlib.md5(content.encode()).hexdigest()
-
-    def _enforce_limit(self, entries: list[str], limit: int) -> None:
-        """限制字符总容量，如果超限则先进先出（即删除最老的消息）直到符合容量线。"""
-        while self._total_chars(entries) > limit and len(entries) > 1:
-            removed = entries.pop(0)
-            logger.info("记忆容量超限，已自动释放最早的备忘记录: %s...", removed[:40])
-
-    @staticmethod
-    def _looks_suspicious(content: str) -> bool:
-        """防御式扫描：防止大模型在被提示词注入劫持后，向其自身的长期记忆中注入攻击载荷。"""
+            return "Content cannot be empty."
         lower = content.lower()
-        threats = [
+        threats = (
             "ignore previous instructions",
             "ignore all instructions",
             "you are now",
             "system prompt",
             "new instructions:",
+            "reveal your instructions",
+            "send credentials",
+            "exfiltrate",
             "<system>",
             "</system>",
-        ]
-        return any(t in lower for t in threats)
+        )
+        if any(pattern in lower for pattern in threats):
+            return "Content rejected by memory threat scanner."
+        if any(char in content for char in _INVISIBLE_UNICODE):
+            return "Content rejected because it contains invisible Unicode characters."
+        return None
+
+    def _path_for(self, target: str) -> Path:
+        return self._user_file if target == "user" else self._memory_file
+
+    def _entries_for(self, target: str) -> list[str]:
+        return self._user_entries if target == "user" else self._memory_entries
+
+    def _set_entries(self, target: str, entries: list[str]) -> None:
+        if target == "user":
+            self._user_entries = entries
+        else:
+            self._memory_entries = entries
+
+    def _limit_for(self, target: str) -> int:
+        return self._user_char_limit if target == "user" else self._agent_char_limit
+
+    @staticmethod
+    def _normalize_target(target: Any) -> str | None:
+        value = str(target or "").lower()
+        if value in {"memory", "agent"}:
+            return "memory"
+        if value == "user":
+            return "user"
+        return None
+
+    @staticmethod
+    def _deduplicate(entries: list[str]) -> list[str]:
+        return list(dict.fromkeys(entries))
+
+    @staticmethod
+    def _char_count(entries: list[str]) -> int:
+        return len(ENTRY_DELIMITER.join(entries)) if entries else 0
+
+    @staticmethod
+    def _read_file(path: Path) -> list[str]:
+        if not path.exists():
+            return []
+        raw = path.read_text(encoding="utf-8")
+        if not raw.strip():
+            return []
+        return [entry.strip() for entry in raw.split(ENTRY_DELIMITER) if entry.strip()]
+
+    @staticmethod
+    def _write_file(path: Path, entries: list[str]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, temp_path = tempfile.mkstemp(dir=str(path.parent), prefix=".memory-", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                stream.write(ENTRY_DELIMITER.join(entries))
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temp_path, path)
+        except BaseException:
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+            raise
+
+    @contextmanager
+    def _locked_target(self, target: str) -> Iterator[None]:
+        """Serialize read-modify-write operations across threads and processes."""
+        lock_path = self._path_for(target).with_suffix(".md.lock")
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with _PROCESS_LOCK, lock_path.open("a+b") as lock_file:
+            if msvcrt is not None:  # Windows requires a byte range to lock.
+                lock_file.seek(0, os.SEEK_END)
+                if lock_file.tell() == 0:
+                    lock_file.write(b"\0")
+                    lock_file.flush()
+                lock_file.seek(0)
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+            elif fcntl is not None:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                if msvcrt is not None:
+                    lock_file.seek(0)
+                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+                elif fcntl is not None:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
-# -- 自动注册至通用工具中心 ----------------------------------------------------
-from tools.registry import registry
-
-MEMORY_SAVE_SCHEMA = {
-    "description": "Save important information to persistent agent memory. Use for facts, decisions, patterns you want to remember across sessions.",
+MEMORY_SCHEMA = {
+    "description": (
+        "Manage bounded persistent memory. Proactively save durable project facts, conventions, "
+        "environment details, corrections, and user preferences. Skip trivial, temporary, secret, "
+        "or easily rediscovered information. Use target='user' for the user profile and "
+        "target='memory' for agent notes. When full, consolidate with replace/remove; never retry "
+        "a successful write."
+    ),
     "parameters": {
         "type": "object",
         "properties": {
-            "content": {"type": "string", "description": "The information to remember"},
-        },
-        "required": ["content"],
-    },
-}
-
-USER_INFO_SAVE_SCHEMA = {
-    "description": "Record user preferences, habits, environment details, or knowledge for personalization.",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "content": {"type": "string", "description": "User information to record"},
-        },
-        "required": ["content"],
-    },
-}
-
-MEMORY_READ_SCHEMA = {
-    "description": "Read current memory entries (live state, may differ from system prompt snapshot).",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "store": {
+            "action": {"type": "string", "enum": ["add", "replace", "remove"]},
+            "target": {"type": "string", "enum": ["memory", "user"]},
+            "content": {"type": "string", "description": "New entry for add/replace."},
+            "old_text": {
                 "type": "string",
-                "enum": ["agent", "user", "both"],
-                "description": "Which memory store to read",
-                "default": "both",
+                "description": "Short unique substring identifying an entry for replace/remove.",
             },
         },
+        "required": ["action", "target"],
     },
 }
 
-MEMORY_DELETE_SCHEMA = {
-    "description": "Delete a memory entry by its index number.",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "store": {
-                "type": "string",
-                "enum": ["agent", "user"],
-                "description": "Which store to delete from",
-            },
-            "index": {
-                "type": "integer",
-                "description": "0-based index of the entry to delete",
-            },
-        },
-        "required": ["store", "index"],
-    },
-}
 
+# Register only the Hermes-style tool. Legacy calls remain accepted directly by
+# MemoryStore.handle_tool_call but are no longer exposed to the model.
 registry.register(
-    name="memory_save",
+    name="memory",
     toolset="memory",
-    schema=MEMORY_SAVE_SCHEMA,
-    handler=lambda content, **kwargs: kwargs["agent"].memory_manager.handle_tool_call("memory_save", {"content": content}),
+    schema=MEMORY_SCHEMA,
+    handler=lambda **kwargs: kwargs["agent"].memory_manager.handle_tool_call(
+        "memory", {key: value for key, value in kwargs.items() if key != "agent"}
+    ),
 )
-
-registry.register(
-    name="user_info_save",
-    toolset="memory",
-    schema=USER_INFO_SAVE_SCHEMA,
-    handler=lambda content, **kwargs: kwargs["agent"].memory_manager.handle_tool_call("user_info_save", {"content": content}),
-)
-
-registry.register(
-    name="memory_read",
-    toolset="memory",
-    schema=MEMORY_READ_SCHEMA,
-    handler=lambda store="both", **kwargs: kwargs["agent"].memory_manager.handle_tool_call("memory_read", {"store": store}),
-)
-
-registry.register(
-    name="memory_delete",
-    toolset="memory",
-    schema=MEMORY_DELETE_SCHEMA,
-    handler=lambda store, index, **kwargs: kwargs["agent"].memory_manager.handle_tool_call("memory_delete", {"store": store, "index": index}),
-)
-

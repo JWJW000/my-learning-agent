@@ -14,6 +14,7 @@ Agent 能够从对话中提炼可复用的技能（Skills），自动管理技�
 | **上下文压缩** | 头尾保护 + 辅助模型压缩中间消息，维持长对话稳定性 |
 | **跨会话搜索** | SQLite FTS5 全文索引，三种搜索模式，零 LLM 开销 |
 | **记忆 Provider** | 抽象基类设计，支持可插拔的外部记忆后端 |
+| **实时时间** | 获取本机或任意 IANA 时区的精确日期、时间与 UTC 偏移 |
 
 ## 项目结构
 
@@ -36,7 +37,8 @@ my-learning-agent/
 ├── tools/                          # Agent 工具集
 │   ├── memory_tool.py              # 内置记忆工具（MemoryStore）
 │   ├── skills_tool.py              # 技能管理器（SkillsManager）
-│   └── session_search.py           # 跨会话搜索（SessionSearch）
+│   ├── session_search.py           # 跨会话搜索（SessionSearch）
+│   └── time_tool.py                # 实时时间与时区转换工具
 │
 ├── plugins/                        # 可插拔扩展目录
 │   └── memory/                     # 记忆后端插件
@@ -66,7 +68,7 @@ my-learning-agent/
 
 ```bash
 # 克隆项目
-git clone <your-repo-url>
+git clone https://github.com/JWJW000/my-learning-agent.git
 cd my-learning-agent
 
 # 安装依赖（推荐使用虚拟环境）

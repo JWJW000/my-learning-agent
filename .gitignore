@@ -20,3 +20,5 @@ skills/*/
 venv/
 .DS_Store
 Thumbs.db
+.understand-anything/.trash-*/
+.understand-anything/dashboard.*.log

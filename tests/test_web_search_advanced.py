@@ -1,11 +1,19 @@
 """Tests for advanced layered WebSearch module."""
 
 import json
+import urllib.error
 import pytest
 from unittest.mock import MagicMock, patch
 
 from tools.web_search import WebSearch
-from tools.web_search.engines import DuckDuckGoEngine, BraveEngine, BingEngine, TavilyEngine, get_default_engine
+from tools.web_search.engines import (
+    BingEngine,
+    BingHTMLEngine,
+    BraveEngine,
+    DuckDuckGoEngine,
+    TavilyEngine,
+    get_default_engine,
+)
 from tools.web_search.cleaner import HTMLCleaner
 from tools.web_search.rankers import BM25Ranker, EmbeddingRanker, LLMReranker
 
@@ -22,6 +30,17 @@ def web_search(mock_openai_client):
 
 
 class TestSearchEngines:
+    @patch.dict(
+        "os.environ",
+        {
+            "TAVILY_API_KEY": "",
+            "BRAVE_API_KEY": "",
+            "BING_API_KEY": "",
+        },
+    )
+    def test_default_engine_without_api_key_uses_bing_html(self):
+        assert isinstance(get_default_engine(), BingHTMLEngine)
+
     @patch("urllib.request.urlopen")
     def test_duckduckgo_engine(self, mock_urlopen):
         mock_response = MagicMock()
@@ -42,6 +61,52 @@ class TestSearchEngines:
         assert results[0]["title"] == "DDG Site"
         assert results[0]["url"] == "https://example.com/ddg"
         assert results[0]["snippet"] == "Snippet test"
+
+    @patch("tools.web_search.engines.BingHTMLEngine.search")
+    @patch("urllib.request.urlopen")
+    def test_duckduckgo_falls_back_to_bing_html(self, mock_urlopen, mock_bing_search):
+        mock_urlopen.side_effect = urllib.error.URLError("TLS connection closed")
+        mock_bing_search.return_value = [
+            {
+                "title": "Fallback result",
+                "url": "https://example.com/fallback",
+                "snippet": "Fallback snippet",
+            }
+        ]
+
+        results = DuckDuckGoEngine().search("python", limit=2)
+
+        assert results == mock_bing_search.return_value
+        mock_bing_search.assert_called_once_with("python", 2)
+
+    @patch("tools.web_search.engines.httpx.get")
+    def test_bing_html_engine_parses_and_unwraps_results(self, mock_get):
+        # Base64-url encoding of https://example.com/python with Bing's a1 prefix.
+        redirect_url = (
+            "https://www.bing.com/ck/a?"
+            "u=a1aHR0cHM6Ly9leGFtcGxlLmNvbS9weXRob24&ntb=1"
+        )
+        mock_response = MagicMock()
+        mock_response.text = (
+            '<ol id="b_results">'
+            '<li class="b_algo">'
+            f'<h2><a href="{redirect_url}">Python Result</a></h2>'
+            '<div class="b_caption"><p>Useful Python snippet.</p></div>'
+            '</li>'
+            '</ol>'
+        )
+        mock_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_response
+
+        results = BingHTMLEngine().search("python", limit=1)
+
+        assert results == [
+            {
+                "title": "Python Result",
+                "url": "https://example.com/python",
+                "snippet": "Useful Python snippet.",
+            }
+        ]
 
     @patch("urllib.request.urlopen")
     def test_brave_engine(self, mock_urlopen):
@@ -123,6 +188,24 @@ class TestHTMLCleaner:
         assert "Copyright" not in cleaned
         assert "Header Title" in cleaned
         assert "Main body content" in cleaned
+
+    def test_cleaner_handles_void_elements_before_body(self):
+        cleaner = HTMLCleaner()
+        html_input = (
+            "<html><head>"
+            '<meta charset="utf-8">'
+            '<link rel="stylesheet" href="site.css">'
+            "</head><body>"
+            "<h1>Visible heading</h1>"
+            "<p>Visible body<br>with a line break.</p>"
+            "</body></html>"
+        )
+
+        cleaned = cleaner.clean(html_input)
+
+        assert "Visible heading" in cleaned
+        assert "Visible body" in cleaned
+        assert "with a line break" in cleaned
 
     def test_chunking_with_overlap(self):
         cleaner = HTMLCleaner()

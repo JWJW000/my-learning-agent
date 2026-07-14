@@ -88,7 +88,9 @@ def load_config(config_path: Optional[str] = None) -> AppConfig:
     if not path.exists():
         return AppConfig()
 
-    raw = yaml.safe_load(path.read_text()) or {}
+    # YAML configuration files in this project are UTF-8.  Passing the encoding
+    # explicitly is required on Windows, where the locale default may be GBK.
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
 
     return AppConfig(
         model=ModelConfig(**raw.get("model", {})),
